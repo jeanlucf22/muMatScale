@@ -16,12 +16,21 @@
 
 extern SB_struct *lsp;
 
+// Subblock IDX (index into a SB array)
+#define XYZ2IDX(x, y, z, gsdimx, gsdimy) \
+        ((x) + \
+         ((y)*(gsdimx+2)) + \
+         ((z)*(gsdimy+2)*(gsdimx+2)))
+
+static double (*direct_temp_calc)(uint32_t sbx,uint32_t sby,uint32_t sbz,
+                                  size_t x,size_t y,size_t z) = NULL;
+
 /****** INTERNAL TEMPERATURE FUNCTIONS ******/
 #ifdef GPU_OMP
 #pragma omp declare target
 #endif
 static double
-direct_temp_calc(
+direct_temp_calc1(
     uint32_t sbx,
     uint32_t sby,
     uint32_t sbz,
@@ -33,94 +42,110 @@ direct_temp_calc(
     double sim_time = bp->timestep * bp->ts_delt;
     double T;
 
-    if (bp->thermal_ana == 0 && t->gradient == 0)
-    {
-        T = t->initialTemperature - sim_time * t->cool_rate;
-    }
-    else
-    {
+    return t->initialTemperature - sim_time * t->cool_rate;
+}
 
-        double rx, ry, rz;
-        scoord2realcoord(sbx, sby, sbz, x, y, z, &rx, &ry, &rz);
+static double
+direct_temp_calc2(
+    uint32_t sbx,
+    uint32_t sby,
+    uint32_t sbz,
+    size_t x,
+    size_t y,
+    size_t z)
+{
+    internal_temp_ctrl_t *t = &bp->temp_ctrl;
+    double sim_time = bp->timestep * bp->ts_delt;
 
-        if (!bp->am)
+    double rx, ry, rz;
+    scoord2realcoord(sbx, sby, sbz, x, y, z, &rx, &ry, &rz);
+
+    double axis = ((bp->gdimz == 1) ? ry : rz) - bp->cellSize * 0.5;    // 2D grow y direction, 3D grow z direction
+
+    double tgrad = t->gradient + t->grad_coef * sim_time;
+    double v = t->velocity + t->velo_coef * sim_time;
+    double vt = 0.5 * (v + t->velocity) * sim_time;
+    //   double iso_coef2 = t->iso_coef2 + t->coef_iso2 * sim_time;
+    //   double slope = t->grad_slope + t->slope_coef * sim_time;
+    //   double T =
+    //       t->initialTemperature + tgrad * (axis -
+    //                                        vt) * cos(slope * M_PI / 180.0) +
+    //       rad * sin(slope * M_PI / 180.0) * tgrad;
+    //   T -= tgrad * (t->iso_coef1 * rad + iso_coef2 * rad * rad);
+    return t->initialTemperature + tgrad * (axis - vt);
+}
+
+static double
+direct_temp_calc3(
+    uint32_t sbx,
+    uint32_t sby,
+    uint32_t sbz,
+    size_t x,
+    size_t y,
+    size_t z)
+{
+    internal_temp_ctrl_t *t = &bp->temp_ctrl;
+    double sim_time = bp->timestep * bp->ts_delt;
+
+    double rx, ry, rz;
+    scoord2realcoord(sbx, sby, sbz, x, y, z, &rx, &ry, &rz);
+
+    double lv = bp->lv;
+    double invlv = 1./lv;
+    double ls = bp->lsd / (2. * 1.414);
+
+    double xlen = bp->gnsbx * bp->gsdimx * bp->cellSize;        // lenght of x direction
+    xlen = xlen + bp->lsd;
+    double tline = xlen * invlv;   //time for each line in x direction
+    double tpause = 1.5e-4 * invlv;
+    tline = tline + tpause;
+    //tline = 3.5e-3;
+    double trackno = 0;
+
+    int layno = bp->amlayer;    //number of layers
+    double tlayer = 50e-6;      //layer thickness
+
+    if (bp->amtracks > 1)
+        trackno = floor(sim_time / tline);
+
+    double xnow = bp->x0 + (sim_time - trackno * tline) * lv;
+    double ynow = bp->y0 + trackno * bp->lhs;
+    double znow = bp->z0;
+    double lpow = bp->lpow;
+
+    double lx = rx - xnow;
+    double ly = ry - ynow;
+    double lz = rz - znow;
+
+    double T = 0.;
+
+    if (rz <= znow + bp->cellSize)
+    {
+        int nt = 400;
+        double lt;
+        double Tinteg = 0.0;
+        double Tlocal, Tfront;
+        double pi15 = 5.568328;
+        double lalpha = bp->lthcon / (bp->rho * bp->lcp);
+        double tsteady = 20 * lalpha * invlv * invlv;
+        double ldt = tsteady / nt;
+
+        if (sim_time < 1e-4)
+            lpow = 0;   //define sometime for substrate to form grains
+
+        for (int i = 0; i < nt; i++)
         {
-            double axis = ((bp->gdimz == 1) ? ry : rz) - bp->cellSize * 0.5;    // 2D grow y direction, 3D grow z direction
-
-            double tgrad = t->gradient + t->grad_coef * sim_time;
-            double v = t->velocity + t->velo_coef * sim_time;
-            double vt = 0.5 * (v + t->velocity) * sim_time;
-            //   double iso_coef2 = t->iso_coef2 + t->coef_iso2 * sim_time;
-            //   double slope = t->grad_slope + t->slope_coef * sim_time;
-            //   double T =
-            //       t->initialTemperature + tgrad * (axis -
-            //                                        vt) * cos(slope * M_PI / 180.0) +
-            //       rad * sin(slope * M_PI / 180.0) * tgrad;
-            //   T -= tgrad * (t->iso_coef1 * rad + iso_coef2 * rad * rad);
-            T = t->initialTemperature + tgrad * (axis - vt);
+            lt = (0.5 + i) * ldt;
+            Tlocal = sqrt(lalpha * lt) * (ls * ls + 4. * lalpha * lt);
+            Tinteg +=
+                ldt *
+                exp(-((lx + lv * lt) * (lx + lv * lt) + ly * ly) /
+                    (ls * ls + 4. * lalpha * lt) -
+                    (lz * lz / (4. * lalpha * lt))) / Tlocal;
         }
-        else if (bp->thermal_ana == 1)
-        {
-            double lv = bp->lv;
-            double invlv = 1./lv;
-            double ls = bp->lsd / (2. * 1.414);
 
-            double xlen = bp->gnsbx * bp->gsdimx * bp->cellSize;        // lenght of x direction
-            xlen = xlen + bp->lsd;
-            double tline = xlen * invlv;   //time for each line in x direction
-            double tpause = 1.5e-4 * invlv;
-            tline = tline + tpause;
-            //tline = 3.5e-3;
-            double trackno = 0;
-
-            int layno = bp->amlayer;    //number of layers
-            double tlayer = 50e-6;      //layer thickness
-
-            if (bp->amtracks > 1)
-                trackno = floor(sim_time / tline);
-
-            double xnow = bp->x0 + (sim_time - trackno * tline) * lv;
-            double ynow = bp->y0 + trackno * bp->lhs;
-            double znow = bp->z0;
-            double lpow = bp->lpow;
-
-            double lx = rx - xnow;
-            double ly = ry - ynow;
-            double lz = rz - znow;
-
-            if (rz <= znow + bp->cellSize)
-            {
-                int nt = 400;
-                double lt;
-                double Tinteg = 0.0;
-                double Tlocal, Tfront;
-                double pi15 = 5.568328;
-                double lalpha = bp->lthcon / (bp->rho * bp->lcp);
-                double tsteady = 20 * lalpha * invlv * invlv;
-                double ldt = tsteady / nt;
-
-                if (sim_time < 1e-4)
-                    lpow = 0;   //define sometime for substrate to form grains
-
-                for (int i = 0; i < nt; i++)
-                {
-                    lt = (0.5 + i) * ldt;
-                    Tlocal = sqrt(lalpha * lt) * (ls * ls + 4. * lalpha * lt);
-                    Tinteg +=
-                        ldt *
-                        exp(-((lx + lv * lt) * (lx + lv * lt) + ly * ly) /
-                            (ls * ls + 4. * lalpha * lt) -
-                            (lz * lz / (4. * lalpha * lt))) / Tlocal;
-                }
-
-                Tfront = bp->lab * lpow * lalpha / (pi15 * bp->lthcon);
-                T = bp->liniT + Tfront * Tinteg;
-            }
-            else
-            {
-                T = 0.0;
-            }
-        }                       // bp->thermal_ana ==1
+        Tfront = bp->lab * lpow * lalpha / (pi15 * bp->lthcon);
+        T = bp->liniT + Tfront * Tinteg;
     }
     return T;
 }
@@ -162,6 +187,20 @@ tempPrepareSB_int(
 
     int totaldim = dimx * dimy * dimz;
 
+    internal_temp_ctrl_t *t = &bp->temp_ctrl;
+
+    if( direct_temp_calc==NULL)
+    {
+        if (bp->thermal_ana == 0 && t->gradient == 0)
+            direct_temp_calc = &direct_temp_calc1;
+        else
+        if (!bp->am)
+            direct_temp_calc = &direct_temp_calc2;
+        else if (bp->thermal_ana == 1)
+            direct_temp_calc = &direct_temp_calc3;
+    }
+
+
     double* temperature = sb->temperature;
     int* lsindex = sb->lsindex;
     uint32_t sbx = sb->coords.x;
@@ -178,7 +217,7 @@ tempPrepareSB_int(
             for (size_t x = 0; x < dimx; x++)
             {
                 temperature[SBIDX(x, y, z)] =
-                    direct_temp_calc(sbx, sby, sbz, x, y, z);
+                    (*direct_temp_calc)(sbx, sby, sbz, x, y, z);
 
                 if (bp->am)
                 {
@@ -221,6 +260,10 @@ tempUpdateSB_int(
     void *vUpdateAll)
 {
     assert(sb != NULL);
+    assert(direct_temp_calc != NULL);
+
+    int gsdimx = bp->gsdimx;
+    int gsdimy = bp->gsdimy;
 
     int dimx = bp->gsdimx + 2;
     int dimy = bp->gsdimy + 2;
@@ -234,9 +277,6 @@ tempUpdateSB_int(
     uint32_t sbz = sb->coords.z;
 
 #ifdef GPU_OMP
-
-    int totaldim = dimx * dimy * dimz;
-#pragma omp target update to(bp[0:1])
 #pragma omp target teams distribute parallel for collapse(3) schedule(static,1)
 #endif
     for (int z = 0; z < dimz; z++)
@@ -245,25 +285,40 @@ tempUpdateSB_int(
         {
             for (int x = 0; x < dimx; x++)
             {
-                /* Note:  This function cannot auto-vectorize in GCC 4.7.0
-                 * because __builtin_sincos() uses a double-complex exponent
-                 * for it's calculations, and double-complex cannot, at this
-                 * time, be vectorized.
-                 */
-                temperature[SBIDX(x, y, z)] =
-                    direct_temp_calc(sbx, sby, sbz, x, y, z);
-
-                if ((bp->thermal_ana)
-                    && (temperature[SBIDX(x, y, z)] > bp->liquidusTemp))
-                    lsindex[SBIDX(x, y, z)] = 1;
+                int idx = XYZ2IDX(x, y, z, gsdimx, gsdimy);
+                temperature[idx] =
+                    (*direct_temp_calc)(sbx, sby, sbz, x, y, z);
             }
         }
+    }
+
+    if (bp->thermal_ana)
+    {
+        double liquidusTemp = bp->liquidusTemp;
+#ifdef GPU_OMP
+#pragma omp target update to(bp[0:1])
+#pragma omp target teams distribute parallel for collapse(3) schedule(static,1)
+#endif
+        for (int z = 0; z < dimz; z++)
+        {
+            for (int y = 0; y < dimy; y++)
+            {
+                for (int x = 0; x < dimx; x++)
+                {
+                    int idx = XYZ2IDX(x, y, z, gsdimx, gsdimy);
+                    if( (temperature[idx] > liquidusTemp))
+                        lsindex[idx] = 1;
+                }
+            }
+        }
+
     }
 
     profile(TEMP_UPDATE);
 
 #ifdef GPU_OMP
 #ifndef GPU_OMP_NUC
+    int totaldim = dimx * dimy * dimz;
 #pragma omp target update from(temperature[0:totaldim])
     profile(OFFLOADING_GPU_CPU);
 #endif
