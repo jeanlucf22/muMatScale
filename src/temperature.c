@@ -20,6 +20,73 @@ extern SB_struct *lsp;
 #ifdef GPU_OMP
 #pragma omp declare target
 #endif
+
+static double
+direct_temp_calc_ana(
+    uint32_t sbx,
+    uint32_t sby,
+    uint32_t sbz,
+    size_t x,
+    size_t y,
+    size_t z)
+{
+    internal_temp_ctrl_t *t = &bp->temp_ctrl;
+    double sim_time = bp->timestep * bp->ts_delt;
+
+    double rx, ry, rz;
+    scoord2realcoord(sbx, sby, sbz, x, y, z, &rx, &ry, &rz);
+
+    const double lv = bp->lv;
+    const double invlv = 1./lv;
+    const double ls = bp->lsd / (2. * 1.414);
+
+    double xlen = bp->gnsbx * bp->gsdimx * bp->cellSize;        // lenght of x direction
+    xlen = xlen + bp->lsd;
+    const double tline = (xlen+1.5e-4) * invlv;   //time for each line in x direction
+
+    double trackno = 0.;
+    if (bp->amtracks > 1)
+        trackno = floor(sim_time / tline);
+
+    double xnow = bp->x0 + (sim_time - trackno * tline) * lv;
+    double ynow = bp->y0 + trackno * bp->lhs;
+    double znow = bp->z0;
+
+    const double lx = rx - xnow;
+    const double ly = ry - ynow;
+    const double lz = rz - znow;
+
+    double T = 0.;
+    if (rz <= znow + bp->cellSize)
+    {
+        const int nt = 400;
+        const double pi15 = 5.568328;
+        const double lalpha = bp->lthcon / (bp->rho * bp->lcp);
+        const double tsteady = 20 * lalpha * invlv * invlv;
+        const double ldt = tsteady / nt;
+
+        double lpow = bp->lpow;
+        if (sim_time < 1.e-4)
+            lpow = 0.;   //define sometime for substrate to form grains
+
+        double Tinteg = 0.0;
+        for (int i = 0; i < nt; i++)
+        {
+            const double lt = (0.5 + i) * ldt;
+            const double Tlocal = sqrt(lalpha * lt) * (ls * ls + 4. * lalpha * lt);
+            Tinteg +=
+                ldt *
+                exp(-((lx + lv * lt) * (lx + lv * lt) + ly * ly) /
+                    (ls * ls + 4. * lalpha * lt) -
+                    (lz * lz / (4. * lalpha * lt))) / Tlocal;
+        }
+
+        const double Tfront = bp->lab * lpow * lalpha / (pi15 * bp->lthcon);
+        T = bp->liniT + Tfront * Tinteg;
+    }
+    return T;
+}
+
 static double
 direct_temp_calc(
     uint32_t sbx,
@@ -61,65 +128,7 @@ direct_temp_calc(
         }
         else if (bp->thermal_ana == 1)
         {
-            double lv = bp->lv;
-            double invlv = 1./lv;
-            double ls = bp->lsd / (2. * 1.414);
-
-            double xlen = bp->gnsbx * bp->gsdimx * bp->cellSize;        // lenght of x direction
-            xlen = xlen + bp->lsd;
-            double tline = xlen * invlv;   //time for each line in x direction
-            double tpause = 1.5e-4 * invlv;
-            tline = tline + tpause;
-            //tline = 3.5e-3;
-            double trackno = 0;
-
-            int layno = bp->amlayer;    //number of layers
-            double tlayer = 50e-6;      //layer thickness
-
-            if (bp->amtracks > 1)
-                trackno = floor(sim_time / tline);
-
-            double xnow = bp->x0 + (sim_time - trackno * tline) * lv;
-            double ynow = bp->y0 + trackno * bp->lhs;
-            double znow = bp->z0;
-            double lpow = bp->lpow;
-
-            double lx = rx - xnow;
-            double ly = ry - ynow;
-            double lz = rz - znow;
-
-            if (rz <= znow + bp->cellSize)
-            {
-                int nt = 400;
-                double lt;
-                double Tinteg = 0.0;
-                double Tlocal, Tfront;
-                double pi15 = 5.568328;
-                double lalpha = bp->lthcon / (bp->rho * bp->lcp);
-                double tsteady = 20 * lalpha * invlv * invlv;
-                double ldt = tsteady / nt;
-
-                if (sim_time < 1e-4)
-                    lpow = 0;   //define sometime for substrate to form grains
-
-                for (int i = 0; i < nt; i++)
-                {
-                    lt = (0.5 + i) * ldt;
-                    Tlocal = sqrt(lalpha * lt) * (ls * ls + 4. * lalpha * lt);
-                    Tinteg +=
-                        ldt *
-                        exp(-((lx + lv * lt) * (lx + lv * lt) + ly * ly) /
-                            (ls * ls + 4. * lalpha * lt) -
-                            (lz * lz / (4. * lalpha * lt))) / Tlocal;
-                }
-
-                Tfront = bp->lab * lpow * lalpha / (pi15 * bp->lthcon);
-                T = bp->liniT + Tfront * Tinteg;
-            }
-            else
-            {
-                T = 0.0;
-            }
+            T = direct_temp_calc_ana(sbx,sby,sbz,x,y,z);
         }                       // bp->thermal_ana ==1
     }
     return T;
@@ -234,8 +243,6 @@ tempUpdateSB_int(
     uint32_t sbz = sb->coords.z;
 
 #ifdef GPU_OMP
-
-    int totaldim = dimx * dimy * dimz;
 #pragma omp target update to(bp[0:1])
 #pragma omp target teams distribute parallel for collapse(3) schedule(static,1)
 #endif
@@ -245,11 +252,6 @@ tempUpdateSB_int(
         {
             for (int x = 0; x < dimx; x++)
             {
-                /* Note:  This function cannot auto-vectorize in GCC 4.7.0
-                 * because __builtin_sincos() uses a double-complex exponent
-                 * for it's calculations, and double-complex cannot, at this
-                 * time, be vectorized.
-                 */
                 temperature[SBIDX(x, y, z)] =
                     direct_temp_calc(sbx, sby, sbz, x, y, z);
 
@@ -264,6 +266,7 @@ tempUpdateSB_int(
 
 #ifdef GPU_OMP
 #ifndef GPU_OMP_NUC
+    int totaldim = dimx * dimy * dimz;
 #pragma omp target update from(temperature[0:totaldim])
     profile(OFFLOADING_GPU_CPU);
 #endif
