@@ -79,8 +79,14 @@ Recv_Plane(
     computeHaloInfo(halo, &offset, &stride, &bsize, &nblocks);
 
     int sizeb = bsize * nblocks * datasize;
-    return MPI_Irecv(rbuffer[halo], sizeb, MPI_BYTE, from, tag, mpi_comm_new,
+    void *temp = rbuffer[halo];
+    int err =0;
+    #pragma omp target data use_device_ptr(temp)
+    {
+         err= MPI_Irecv(temp, sizeb, MPI_BYTE, from, tag, mpi_comm_new,
                      req);
+    }
+    return err;
 }
 
 void
@@ -183,8 +189,14 @@ Send_Plane(
     pack_field(datasize, data, stride, bsize, nblocks, offset, sbuffer[face]);
 
     int sizeb = bsize * nblocks * datasize;
-    return MPI_Isend(sbuffer[face], sizeb, MPI_BYTE, to, tag, mpi_comm_new,
+    void *temp = sbuffer[face];
+    int err=0;
+    #pragma omp target data use_device_ptr(temp)
+    {
+        err= MPI_Isend(temp, sizeb, MPI_BYTE, to, tag, mpi_comm_new,
                      req);
+    }
+    return err;
 }
 
 /**
