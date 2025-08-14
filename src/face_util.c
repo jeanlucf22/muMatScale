@@ -220,7 +220,6 @@ Send_Plane(
         fprintf(stderr, "Error: MPI_Isend failed with error code %d\n", err);
     }
     return err;
-
 }
 
 /**
