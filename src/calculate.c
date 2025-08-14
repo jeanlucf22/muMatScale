@@ -76,8 +76,8 @@ static void
 FinishExchangeForVar(
     int variable_key, void* data)
 {
-    variable_registration *v = &var_regs[variable_key];
 
+    variable_registration *v = &var_regs[variable_key];
     dwrite(DEBUG_MPI, "%d: Just before Waitall\n", iproc);
     timing(COMPUTATION, timer_elapsed());
 
@@ -87,17 +87,17 @@ FinishExchangeForVar(
     dwrite(DEBUG_MPI, "%d: Waitall returned\n", iproc);
     profile(FACE_EXCHNG_REMOTE_WAIT);
 
-    // unpack received data
-    SB_struct *s = lsp;
-    for (int face = 0; face < NUM_NEIGHBORS; face++)
-    {
+      // unpack received data
+      SB_struct *s = lsp;
+      for (int face = 0; face < NUM_NEIGHBORS; face++)
+      {
         int rank = s->neighbors[face][0];
         // A rank of less than 0 means that it isn't assigned
         if (rank >= 0 && rank != iproc)
         {
             unpack_plane(data, v->datasize, face, v->rbuf);
         }
-    }
+      }
 
 }
 

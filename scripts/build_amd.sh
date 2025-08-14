@@ -3,7 +3,10 @@ module load PrgEnv-amd/8.4.0
 module load craype-accel-amd-gfx90a
 module load hdf5
 module load cmake
+module load cray-pmi
 
+export MPICH_GPU_SUPPORT_ENABLED=1
+ 
 rm -rf build
 mkdir build
 cd build

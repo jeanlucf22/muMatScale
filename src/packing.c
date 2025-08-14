@@ -12,6 +12,8 @@
 
 // stride: distance between begining of two blocks of data
 // bsize: number of int/double per block of data
+#ifdef GPU_PACK
+#pragma omp declare target 
 void
 pack_double(
     double *data,
@@ -22,7 +24,7 @@ pack_double(
     double *buffer)
 {
 #ifdef GPU_PACK
-#pragma omp target teams distribute parallel for simd collapse(2)
+#pragma omp teams distribute parallel for simd collapse(2)
 #endif
     for (int i = 0; i < nblocks; i++)
         for (int j = 0; j < bsize; j++)
@@ -30,10 +32,10 @@ pack_double(
 
     profile(PACKING);
 
-#ifdef GPU_PACK
-#pragma omp target update from(buffer[0:nblocks*bsize])
+//#ifdef CPU_MPI
+//#pragma omp target update from(buffer[0:nblocks*bsize])
     profile(PACKING_GPU_CPU);
-#endif
+//#endif
 }
 
 void
@@ -46,7 +48,7 @@ pack_int(
     int *buffer)
 {
 #ifdef GPU_PACK
-#pragma omp target teams distribute parallel for simd collapse(2)
+#pragma omp teams distribute parallel for simd collapse(2)
 #endif
     for (int i = 0; i < nblocks; i++)
         for (int j = 0; j < bsize; j++)
@@ -54,10 +56,10 @@ pack_int(
 
     profile(PACKING);
 
-#ifdef GPU_PACK
-#pragma omp target update from(buffer[0:nblocks*bsize])
+//#ifdef CPU_MPI
+//#pragma omp target update from(buffer[0:nblocks*bsize])
     profile(PACKING_GPU_CPU);
-#endif
+//#endif
 }
 
 void
@@ -73,7 +75,7 @@ pack_3double(
     const int stride3 = 3 * stride;
     const int bsize3 = 3 * bsize;
 #ifdef GPU_PACK
-#pragma omp target teams distribute parallel for simd collapse(2)
+#pragma omp teams distribute parallel for simd collapse(2)
 #endif
     for (int i = 0; i < nblocks; i++)
         for (int j = 0; j < bsize3; j++)
@@ -83,10 +85,10 @@ pack_3double(
 
     profile(PACKING);
 
-#ifdef GPU_PACK
-#pragma omp target update from(buffer[0:nblocks*bsize3])
+//#ifdef CPU_MPI
+//#pragma omp target update from(buffer[0:nblocks*bsize3])
     profile(PACKING_GPU_CPU);
-#endif
+//#endif
 }
 
 void
@@ -128,11 +130,11 @@ unpack_double(
     const int offset,
     double *buffer)
 {
-#ifdef GPU_PACK
-#pragma omp target update to(buffer[0:nblocks*bsize])
+//#ifdef CPU_MPI
+//#pragma omp target update to(buffer[0:nblocks*bsize])
     profile(PACKING_CPU_GPU);
-#pragma omp target teams distribute parallel for simd collapse(2)
-#endif
+#pragma omp teams distribute parallel for simd collapse(2)
+//#endif
     for (int i = 0; i < nblocks; i++)
         for (int j = 0; j < bsize; j++)
             data[offset + i * stride + j] = buffer[i * bsize + j];
@@ -147,11 +149,11 @@ unpack_int(
     const int offset,
     int *buffer)
 {
-#ifdef GPU_PACK
-#pragma omp target update to(buffer[0:nblocks*bsize])
+//#ifdef CPU_MPI
+//#pragma omp target update to(buffer[0:nblocks*bsize])
     profile(PACKING_CPU_GPU);
-#pragma omp target teams distribute parallel for simd collapse(2)
-#endif
+#pragma omp teams distribute parallel for simd collapse(2)
+//#endif
     for (int i = 0; i < nblocks; i++)
         for (int j = 0; j < bsize; j++)
             data[offset + i * stride + j] = buffer[i * bsize + j];
@@ -170,11 +172,11 @@ unpack_3double(
     const int stride3 = 3 * stride;
     const int bsize3 = 3 * bsize;
 
-#ifdef GPU_PACK
-#pragma omp target update to(buffer[0:3*nblocks*bsize])
+//#ifdef CPU_MPI
+//#pragma omp target update to(buffer[0:3*nblocks*bsize])
     profile(PACKING_CPU_GPU);
-#pragma omp target teams distribute parallel for simd collapse(2)
-#endif
+#pragma omp teams distribute parallel for simd collapse(2)
+//#endif
     for (int i = 0; i < nblocks; i++)
         for (int j = 0; j < bsize3; j++)
         {
@@ -318,3 +320,5 @@ computeFaceInfo(
             break;
     }
 }
+#endif
+

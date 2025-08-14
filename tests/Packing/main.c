@@ -110,10 +110,15 @@ exchange_data(
                send_buffer);
 
     MPI_Request req;
-    MPI_Irecv(recv_buffer, dim2, MPI_DOUBLE, src, 0, MPI_COMM_WORLD, &req);
-    MPI_Send(send_buffer, dim2, MPI_DOUBLE, dest, 0, MPI_COMM_WORLD);
-    MPI_Status mpi_status;
-    MPI_Wait(&req, &mpi_status);
+    void *temp1 = recv_buffer;
+    void *temp2 = send_buffer;
+    #pragma omp target data use_device_ptr(temp1, temp2)
+    {
+      MPI_Irecv(temp1, dim2, MPI_DOUBLE, src, 0, MPI_COMM_WORLD, &req);
+      MPI_Send(temp2, dim2, MPI_DOUBLE, dest, 0, MPI_COMM_WORLD);
+      MPI_Status mpi_status;
+      MPI_Wait(&req, &mpi_status);
+    }
 
     // recv data in halo cells
     computeHaloInfo(halo, &offset, &stride, &bsize, &nblocks);

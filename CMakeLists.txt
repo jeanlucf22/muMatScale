@@ -85,6 +85,8 @@ if(${BUILD_FOR_GPU})
     target_compile_definitions(muMatScale PRIVATE GPU_PACK)
     target_compile_definitions(muMatScale PRIVATE GPU_OMP_NUC)
     target_link_libraries(muMatScale PRIVATE ${EXTRA_OpenMP_C_FLAGS})
+else(${BUILD_FOR_GPU})
+	target_compile_definitions(muMatScale PRIVATE CPU_MPI)
 endif()
 
 enable_testing()
