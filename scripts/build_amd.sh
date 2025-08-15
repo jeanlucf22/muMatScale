@@ -12,6 +12,7 @@ mkdir build
 cd build
 
 cmake -DCMAKE_C_COMPILER=cc -DBUILD_FOR_GPU=yes \
+      -DBUILD_WITH_GPU_AWARE_MPI=yes \
       -DMPIEXEC_EXECUTABLE="/usr/bin/srun" \
       -DMPIEXEC_NUMPROC_FLAG="-n" \
       -DMPIEXEC_PREFLAGS="-c7;--gpus-per-task=1;--gpu-bind=closest" \
