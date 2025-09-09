@@ -112,7 +112,11 @@ exchange_data(
     MPI_Request req;
     void *temp1 = recv_buffer;
     void *temp2 = send_buffer;
-    #pragma omp target data use_device_ptr(temp1, temp2)
+#ifdef GPU_PACK
+#ifndef CPU_MPI
+#pragma omp target data use_device_ptr(temp1, temp2)
+#endif
+#endif
     {
       MPI_Irecv(temp1, dim2, MPI_DOUBLE, src, 0, MPI_COMM_WORLD, &req);
       MPI_Send(temp2, dim2, MPI_DOUBLE, dest, 0, MPI_COMM_WORLD);

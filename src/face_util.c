@@ -82,7 +82,11 @@ Recv_Plane(
     //fprintf(stderr, "Entering data region for receive\n\n\n\n");
     void *temp = rbuffer[halo];
 
-    #pragma omp target data use_device_ptr(temp) 
+#ifdef GPU_PACK
+#ifndef CPU_MPI
+#pragma omp target data use_device_ptr(temp)
+#endif
+#endif
     {
       //void *temp = omp_get_mapped_ptr(rbuffer[halo], omp_get_default_device());
       //printf("Values of	bsize:%d , nblocks:%d, datasize:%d, temp: %p,rbuffer[halo]:%p, from:%d, tag:%d, req:%p\n\n", bsize,nblocks,datasize, temp, rbuffer[halo], from,tag,req);   
@@ -201,7 +205,11 @@ Send_Plane(
     int sizeb = bsize * nblocks * datasize;
 
     void *temp = sbuffer[face];
-    #pragma omp target data use_device_ptr(temp) 
+#ifdef GPU_PACK
+#ifndef CPU_MPI
+#pragma omp target data use_device_ptr(temp)
+#endif
+#endif
     {
 
       //fprintf(stderr, "Entering data region for send\n\n\n\n");
