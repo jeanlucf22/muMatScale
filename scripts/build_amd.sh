@@ -3,12 +3,16 @@ module load PrgEnv-amd/8.4.0
 module load craype-accel-amd-gfx90a
 module load hdf5
 module load cmake
+module load cray-pmi
 
+export MPICH_GPU_SUPPORT_ENABLED=1
+ 
 rm -rf build
 mkdir build
 cd build
 
 cmake -DCMAKE_C_COMPILER=cc -DBUILD_FOR_GPU=yes \
+      -DBUILD_WITH_GPU_AWARE_MPI=yes \
       -DMPIEXEC_EXECUTABLE="/usr/bin/srun" \
       -DMPIEXEC_NUMPROC_FLAG="-n" \
       -DMPIEXEC_PREFLAGS="-c7;--gpus-per-task=1;--gpu-bind=closest" \

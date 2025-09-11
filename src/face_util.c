@@ -76,11 +76,31 @@ Recv_Plane(
     int stride;
     int bsize;
     int nblocks;
-    computeHaloInfo(halo, &offset, &stride, &bsize, &nblocks);
+    int err = 0;
 
-    int sizeb = bsize * nblocks * datasize;
-    return MPI_Irecv(rbuffer[halo], sizeb, MPI_BYTE, from, tag, mpi_comm_new,
+    computeHaloInfo(halo, &offset, &stride, &bsize, &nblocks);
+    //fprintf(stderr, "Entering data region for receive\n\n\n\n");
+    void *temp = rbuffer[halo];
+
+#ifdef GPU_PACK
+#ifndef CPU_MPI
+#pragma omp target data use_device_ptr(temp)
+#endif
+#endif
+    {
+      //void *temp = omp_get_mapped_ptr(rbuffer[halo], omp_get_default_device());
+      //printf("Values of	bsize:%d , nblocks:%d, datasize:%d, temp: %p,rbuffer[halo]:%p, from:%d, tag:%d, req:%p\n\n", bsize,nblocks,datasize, temp, rbuffer[halo], from,tag,req);   
+
+      int sizeb = bsize * nblocks * datasize;
+
+      err =  MPI_Irecv(temp, sizeb, MPI_BYTE, from, tag, mpi_comm_new,
                      req);
+    }
+
+    if (err != MPI_SUCCESS) 
+      fprintf(stderr, "Error: MPI_Irecv failed with error code %d\n", err);
+
+    return err;
 }
 
 void
@@ -178,13 +198,29 @@ Send_Plane(
     int stride;
     int bsize;
     int nblocks;
+    int err = 0;
+
     computeFaceInfo(face, &offset, &stride, &bsize, &nblocks);
-
     pack_field(datasize, data, stride, bsize, nblocks, offset, sbuffer[face]);
-
     int sizeb = bsize * nblocks * datasize;
-    return MPI_Isend(sbuffer[face], sizeb, MPI_BYTE, to, tag, mpi_comm_new,
-                     req);
+
+    void *temp = sbuffer[face];
+#ifdef GPU_PACK
+#ifndef CPU_MPI
+#pragma omp target data use_device_ptr(temp)
+#endif
+#endif
+    {
+
+      //fprintf(stderr, "Entering data region for send\n\n\n\n");
+      err = MPI_Isend(temp, sizeb, MPI_BYTE, to, tag, mpi_comm_new,req);
+
+
+      if (err != MPI_SUCCESS)
+        fprintf(stderr, "Error: MPI_Isend failed with error code %d\n", err);
+    }
+    return err;
+
 }
 
 /**
