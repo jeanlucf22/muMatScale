@@ -89,6 +89,8 @@ FinishExchangeForVar(
 
       // unpack received data
       SB_struct *s = lsp;
+
+#pragma omp target teams distribute
       for (int face = 0; face < NUM_NEIGHBORS; face++)
       {
         int rank = s->neighbors[face][0];
