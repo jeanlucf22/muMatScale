@@ -5,6 +5,33 @@
 /* See the top-level LICENSE file for details.                 */
 /***************************************************************/
 
+void
+unpack_3double(
+    double *data,
+    const int stride,
+    const int bsize,
+    const int nblocks,
+    const int offset,
+    double *buffer);
+
+void
+unpack_double(
+    double *data,
+    const int stride,
+    const int bsize,
+    const int nblocks,
+    const int offset,
+    double *buffer);
+
+void
+unpack_int(
+    int *data,
+    const int stride,
+    const int bsize,
+    const int nblocks,
+    const int offset,
+    int *buffer);
+
 void pack_field(
     const size_t datasize,
     void *data,

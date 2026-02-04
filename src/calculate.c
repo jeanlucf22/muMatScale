@@ -38,7 +38,7 @@ extern int gLogStateEndID;
 #include "curvature.h"
 
 SB_struct *lsp;
-
+int sp_counter = 0;
 
 typedef struct variable_registration
 {
@@ -89,15 +89,108 @@ FinishExchangeForVar(
 
       // unpack received data
       SB_struct *s = lsp;
+
+      //SP: Introducing loacal array face_val to cpy values from struct "s"
+      int face_val[NUM_NEIGHBORS];
+
+      for(int i=0;i<NUM_NEIGHBORS; i++)
+	face_val[i] = s->neighbors[i][0];
+
+      //SP: ultimate goal is for this target region to work
+      //SP: Refactoring code to move conditional out 
+      /*
       for (int face = 0; face < NUM_NEIGHBORS; face++)
       {
-        int rank = s->neighbors[face][0];
+        //int rank = s->neighbors[face][0];
+        int rank = face_val[face];
         // A rank of less than 0 means that it isn't assigned
         if (rank >= 0 && rank != iproc)
         {
-            unpack_plane(data, v->datasize, face, v->rbuf);
+                //SP: gives same seg fault
+		//#pragma omp target
+	    	unpack_plane(data, v->datasize, face, v->rbuf);
         }
       }
+      */
+      //SP:We have the size of the data-type,which is constant per for loop 
+      size_t data_size = v->datasize;
+
+      //SP: Collect valid faces first
+      int valid_faces[NUM_NEIGHBORS] = {0};
+      int num_valid = 0;
+
+      for (int face = 0; face < NUM_NEIGHBORS; face++) {
+        int rank = face_val[face];
+        if (rank >= 0 && rank != iproc) {
+          valid_faces[num_valid++] = face;
+        }
+      }
+      //printf("Number of valid faces: %d \n\n",num_valid-1);
+      
+      //SP: We call computeHaloInfo to record all the strides, bsizes, 
+      //nblocks, and offsets,
+	int offset[NUM_NEIGHBORS];
+        int stride[NUM_NEIGHBORS];
+        int bsize[NUM_NEIGHBORS];
+        int nblocks[NUM_NEIGHBORS];
+
+      for (int i = 0; i < num_valid; i++) {
+         int face = valid_faces[i];
+         computeHaloInfo(face, &offset[i], &stride[i], &bsize[i], &nblocks[i]);
+
+      }
+      
+      //printf("computeHaloInfo called for all valid faces.\n\n");
+
+      //SP: Now offload all valid faces at once
+      switch (data_size)
+      {
+        case 8:
+		  //SP: Both loops need to be based off the same iterator
+		  double *local_8data = (double *) data;
+                  double *rbuffer8[NUM_NEIGHBORS];
+		  for(int i=0; i< num_valid;i++){
+			  int face = valid_faces[i];
+			  rbuffer8[i] = (double *)v->rbuf[face];
+		  }
+                  #pragma omp target teams distribute map(to:rbuffer8[:6])
+                  for (int i = 0; i < num_valid; i++) {
+                    unpack_double(local_8data,stride[i], bsize[i], nblocks[i], offset[i],
+                          rbuffer8[i]);
+		  }
+		  break;
+        case 4:
+		  int *local_4data = (int *) data;
+                  int *rbuffer4[NUM_NEIGHBORS];
+		  for(int i=0; i< num_valid;i++){
+			  int face = valid_faces[i];
+			  rbuffer4[i] = (int *)v->rbuf[face];
+		  }
+		  #pragma omp target teams distribute map(to:rbuffer4[:6])
+                  for (int i = 0; i < num_valid; i++) {
+                    unpack_int(local_4data,stride[i], bsize[i], nblocks[i], offset[i],
+                          rbuffer4[i]);
+		  }
+                  break;
+        case 24:
+		  double *local_24data = (double *) data;
+                  double *rbuffer24[NUM_NEIGHBORS];
+		  for(int i=0; i< num_valid;i++){
+			  int face = valid_faces[i];
+			  rbuffer24[i] = (double *)v->rbuf[face];
+		  }
+		  #pragma omp target teams distribute map(to:rbuffer24[:6])
+                  for (int i = 0; i < num_valid; i++) {
+                    unpack_3double(local_24data, stride[i], bsize[i], nblocks[i], offset[i],
+                          rbuffer24[i]);
+		  }
+                  break;
+        default:
+            printf("error: datasize %zu not supported\n", data_size);
+            break;
+      }
+      sp_counter++;
+      //printf("Passed switch %d times\n\n\n",sp_counter);
 
 }
 

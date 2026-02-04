@@ -13,16 +13,19 @@
  * Contains definitions of global data structures.
  */
 
-int iproc;                      ///< My process rank
-int nproc;                      ///< Number of processors
+// int iproc;                      ///< My process rank
+// int nproc;                      ///< Number of processors
 
 MPI_Comm mpi_comm_new;
 
 MSB_struct *gmsp;               ///< list of all subblocks
 
 #ifdef GPU_OMP
-#pragma omp declare target
+#pragma omp begin declare target
 #endif
+//SP: Moving for GPU accessibility
+int iproc;                      ///< My process rank
+int nproc;                      ///< Number of processors
 
 BB_struct *bp;                  ///< Main configuration structure
 

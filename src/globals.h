@@ -14,6 +14,10 @@
 //#include "ll.h"
 
 //#define OMP_RELEASE
+//SP: Adding to see if seg fault can be resolved
+#ifdef GPU_OMP
+//#pragma omp requires unified_shared_memory
+#endif
 
 #define MAX(x,y)    (((x) > (y))? (x) : (y))
 #define MIN(x,y)    (((x) < (y))? (x) : (y))
@@ -270,6 +274,11 @@ typedef struct internal_temp_ctrl
 
 extern grain_t *grain_cache;
 
+
+//SP: Added declare target around bbstruct
+#ifdef GPU_OMP
+#pragma omp begin declare target
+#endif
 typedef struct bbstruct
 {
     // Global information
@@ -401,6 +410,9 @@ typedef struct bbstruct
     double lga, lgb, lgcr, lgcf;
 
 } BB_struct;
+#ifdef GPU_OMP
+#pragma omp end declare target
+#endif
 
 
 // If you update this, update 'functions.c:setup_mpi_datatypes'
@@ -411,13 +423,21 @@ typedef struct nbr_info_s
 } nbr_info_t;
 
 
+//SP: Added declare target around iproc
+#ifdef GPU_OMP
+#pragma omp begin declare target
+#endif
 extern int iproc;               // My process rank
+#ifdef GPU_OMP
+#pragma omp end declare target
+#endif
+
 extern int nproc;               // Number of processors
 
 extern MSB_struct *gmsp;
 
 #ifdef GPU_OMP
-#pragma omp declare target
+#pragma omp begin declare target
 #endif
 extern BB_struct *bp;
 #ifdef GPU_OMP

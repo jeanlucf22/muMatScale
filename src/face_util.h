@@ -70,5 +70,10 @@ void unpack_plane(
     size_t datasize,
     int halo,
     void *rbuf[6]);
-
+//SP:Adding a new version
+void unpack_plane1(
+    char *data,
+    size_t datasize,
+    int halo,
+    void *rbuf[6]);
 #endif /* FACE_UTIL.H */

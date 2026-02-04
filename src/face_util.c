@@ -102,6 +102,25 @@ Recv_Plane(
 
     return err;
 }
+#pragma omp begin declare target
+void
+unpack_plane1(
+    char *data,
+    size_t datasize,
+    int halo,
+    void *rbuffer[6])
+{
+    //assert(rbuffer[halo] != NULL); //SP: removing assert for GPU exec
+
+    int offset;
+    int stride;
+    int bsize;
+    int nblocks;
+    computeHaloInfo(halo, &offset, &stride, &bsize, &nblocks);
+    unpack_field(datasize, data, stride, bsize, nblocks, offset,
+                  rbuffer[halo]);
+}
+
 
 void
 unpack_plane(
@@ -110,17 +129,58 @@ unpack_plane(
     int halo,
     void *rbuffer[6])
 {
-    assert(rbuffer[halo] != NULL);
+    //assert(rbuffer[halo] != NULL); //SP: removing assert for GPU exec
 
     int offset;
     int stride;
     int bsize;
     int nblocks;
-    computeHaloInfo(halo, &offset, &stride, &bsize, &nblocks);
+    //computeHaloInfo(halo, &offset, &stride, &bsize, &nblocks);
 
+ //SP:Level2, seg fault 
+ //#pragma omp target map(to: data, rbuffer[halo])
     unpack_field(datasize, data, stride, bsize, nblocks, offset,
-                 rbuffer[halo]);
+                  rbuffer[halo]);
+
+    //SP: This works, void ptrs need to be cast before offload
+    /*
+   switch (datasize)
+    {
+        case 8:
+		{
+		double *local_data = (double *) data;
+		double *local_rbuf = (double *) rbuffer[halo];
+                #pragma omp target
+                unpack_double(local_data, stride, bsize, nblocks, offset,
+                          local_rbuf);
+		}
+            break;
+        case 4:
+	    {
+		    int *local_data = (int *) data;
+		    int *local_rbuf = (int *) rbuffer[halo];
+            #pragma omp target
+            unpack_int(local_data, stride, bsize, nblocks, offset,
+                       local_rbuf);
+	    }
+            break;
+        case 24:
+		{
+		double *local_data = (double *) data;
+		double *local_rbuf = (double *) rbuffer[halo];
+                #pragma omp target
+                unpack_double(local_data, stride, bsize, nblocks, offset,
+                          local_rbuf);
+		}
+            break;
+        default:
+            printf("error: datasize %zu not supported\n", datasize);
+            break;
+    }
+    */
+
 }
+#pragma omp end declare target
 
 /**
  * Receives halo information, Non-Blocking
