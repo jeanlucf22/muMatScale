@@ -38,7 +38,6 @@ extern int gLogStateEndID;
 #include "curvature.h"
 
 SB_struct *lsp;
-int sp_counter = 0;
 
 typedef struct variable_registration
 {
@@ -46,6 +45,9 @@ typedef struct variable_registration
     int nreq;
     size_t datasize;
     void *rbuf[6];
+#ifdef GPU_PACK
+    void *device_rbuf[6];
+#endif
     void *sbuf[6];
 } variable_registration;
 
@@ -96,23 +98,6 @@ FinishExchangeForVar(
       for(int i=0;i<NUM_NEIGHBORS; i++)
 	face_val[i] = s->neighbors[i][0];
 
-      //SP: ultimate goal is for this target region to work
-      //SP: Refactoring code to move conditional out 
-      /*
-      for (int face = 0; face < NUM_NEIGHBORS; face++)
-      {
-        //int rank = s->neighbors[face][0];
-        int rank = face_val[face];
-        // A rank of less than 0 means that it isn't assigned
-        if (rank >= 0 && rank != iproc)
-        {
-                //SP: gives same seg fault
-		//#pragma omp target
-	    	unpack_plane(data, v->datasize, face, v->rbuf);
-        }
-      }
-      */
-      //SP:We have the size of the data-type,which is constant per for loop 
       size_t data_size = v->datasize;
 
       //SP: Collect valid faces first
@@ -126,71 +111,91 @@ FinishExchangeForVar(
         }
       }
       //printf("Number of valid faces: %d \n\n",num_valid-1);
-      
-      //SP: We call computeHaloInfo to record all the strides, bsizes, 
+
+      //SP: We call computeHaloInfo to record all the strides, bsizes,
       //nblocks, and offsets,
-	int offset[NUM_NEIGHBORS];
-        int stride[NUM_NEIGHBORS];
-        int bsize[NUM_NEIGHBORS];
-        int nblocks[NUM_NEIGHBORS];
+      int offset[NUM_NEIGHBORS];
+      int stride[NUM_NEIGHBORS];
+      int bsize[NUM_NEIGHBORS];
+      int nblocks[NUM_NEIGHBORS];
 
       for (int i = 0; i < num_valid; i++) {
          int face = valid_faces[i];
          computeHaloInfo(face, &offset[i], &stride[i], &bsize[i], &nblocks[i]);
-
       }
-      
+
       //printf("computeHaloInfo called for all valid faces.\n\n");
 
+
       //SP: Now offload all valid faces at once
-      switch (data_size)
-      {
+    switch (data_size)
+    {
         case 8:
-		  //SP: Both loops need to be based off the same iterator
-		  double *local_8data = (double *) data;
-                  double *rbuffer8[NUM_NEIGHBORS];
-		  for(int i=0; i< num_valid;i++){
-			  int face = valid_faces[i];
-			  rbuffer8[i] = (double *)v->rbuf[face];
+        {
+	    // return;
+            double *local_8data = (double*) data;
+            void** rbuf = v->device_rbuf;
+            #pragma omp target teams distribute  \
+	                                        map(to:valid_faces[0:NUM_NEIGHBORS]) \
+                                                map(to:offset) \
+                                                map(to:stride) \
+                                                map(to:bsize) \
+                                                map(to:nblocks, local_8data) //num_teams(6)
+            for (int i = 0; i < num_valid; i++){ 
+                int face = valid_faces[i];
+                double *dbuf = (double*)rbuf[face];
+                #pragma omp parallel for collapse(2)
+                for (int k = 0; k < nblocks[i]; k++)
+                  for (int j = 0; j < bsize[i]; j++){
+                    local_8data[offset[i] + k * stride[i] + j] = dbuf[k * bsize[i] + j];
 		  }
-                  #pragma omp target teams distribute map(to:rbuffer8[:6])
-                  for (int i = 0; i < num_valid; i++) {
-                    unpack_double(local_8data,stride[i], bsize[i], nblocks[i], offset[i],
-                          rbuffer8[i]);
-		  }
-		  break;
+            
+
+                //unpack_double(local_8data,stride[i], bsize[i], nblocks[i], offset[i],
+                //          dbuf);
+	    }
+            break;
+        }
         case 4:
-		  int *local_4data = (int *) data;
-                  int *rbuffer4[NUM_NEIGHBORS];
-		  for(int i=0; i< num_valid;i++){
-			  int face = valid_faces[i];
-			  rbuffer4[i] = (int *)v->rbuf[face];
-		  }
-		  #pragma omp target teams distribute map(to:rbuffer4[:6])
-                  for (int i = 0; i < num_valid; i++) {
+        {
+	//	return;
+		  int *local_4data = (int*) data;
+		  void** rbuf = v->device_rbuf;
+		  #pragma omp target teams distribute map(to:valid_faces[0:NUM_NEIGHBORS]) \
+                                                      map(to:offset) \
+                                                      map(to:stride) \
+                                                      map(to:bsize) \
+                                                      map(to:nblocks) //num_teams(6)
+		  for (int i = 0; i < num_valid; i++) {
+                    int face = valid_faces[i];
+                    int *dbuf = (int*)rbuf[face];
                     unpack_int(local_4data,stride[i], bsize[i], nblocks[i], offset[i],
-                          rbuffer4[i]);
-		  }
+                          dbuf);
+                  }
                   break;
+        }
         case 24:
-		  double *local_24data = (double *) data;
-                  double *rbuffer24[NUM_NEIGHBORS];
-		  for(int i=0; i< num_valid;i++){
-			  int face = valid_faces[i];
-			  rbuffer24[i] = (double *)v->rbuf[face];
-		  }
-		  #pragma omp target teams distribute map(to:rbuffer24[:6])
+        {
+	//	return;
+		  double *local_24data = (double*) data;
+		  void** rbuf = v->device_rbuf;
+		  #pragma omp target teams distribute map(to:valid_faces[0:NUM_NEIGHBORS]) \
+                                                      map(to:offset) \
+                                                      map(to:stride) \
+                                                      map(to:bsize) \
+                                                      map(to:nblocks) //num_teams(6)
                   for (int i = 0; i < num_valid; i++) {
+		    int face = valid_faces[i];
+                    double *dbuf = (double*)rbuf[face];
                     unpack_3double(local_24data, stride[i], bsize[i], nblocks[i], offset[i],
-                          rbuffer24[i]);
+                          dbuf);
 		  }
                   break;
+        }
         default:
             printf("error: datasize %zu not supported\n", data_size);
             break;
       }
-      sp_counter++;
-      //printf("Passed switch %d times\n\n\n",sp_counter);
 
 }
 
@@ -235,27 +240,50 @@ ExchangeFacesForVar(
 switch( v->datasize)
 {
     case 8:
+      {
         dbuf = (double*)v->rbuf[face];
-#pragma omp target enter data map(to:dbuf[:n2])
+        #pragma omp target enter data map(to:dbuf[:n2])
+        void** vbuf = v->device_rbuf;
+        #pragma omp target data use_device_ptr(dbuf)
+        {
+          vbuf[face] = dbuf;
+        }
         dbuf = (double*)v->sbuf[face];
-#pragma omp target enter data map(to:dbuf[:n2])
+        #pragma omp target enter data map(to:dbuf[:n2])
         break;
+      }
    case 4:
+      {
        ibuf = (int*)v->rbuf[face];
-#pragma omp target enter data map(to:ibuf[:n2])
+        #pragma omp target enter data map(to:ibuf[:n2])
+       void** vbuf = v->device_rbuf;
+        #pragma omp target data use_device_ptr(ibuf)
+        {
+          vbuf[face] = ibuf;
+        }
        ibuf = (int*)v->sbuf[face];
-#pragma omp target enter data map(to:ibuf[:n2])
+       #pragma omp target enter data map(to:ibuf[:n2])
        break;
+      }
    case 24:
+      {
         dbuf = (double*)v->rbuf[face];
-#pragma omp target enter data map(to:dbuf[:3*n2])
+        #pragma omp target enter data map(to:dbuf[:n2*3])
+        void** vbuf = v->device_rbuf;
+        #pragma omp target data use_device_ptr(dbuf)
+        {
+          vbuf[face] = dbuf;
+        }
         dbuf = (double*)v->sbuf[face];
-#pragma omp target enter data map(to:dbuf[:3*n2])
+        #pragma omp target enter data map(to:dbuf[:3*n2])
    default:
        break;
+      }
 }
 #endif
         }
+void** vbuf = v->device_rbuf;
+#pragma omp target enter data map(to: vbuf[0:NUM_NEIGHBORS])
     }
 
     timing(COMPUTATION, timer_elapsed());

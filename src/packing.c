@@ -144,10 +144,9 @@ unpack_double(
 
 //#pragma omp target teams distribute parallel for simd collapse(2)
 #endif
-#pragma omp parallel for //simd collapse(2)
+#pragma omp parallel for simd collapse(2) //num_threads(nblocks)
     for (int i = 0; i < nblocks; i++)
         for (int j = 0; j < bsize; j++)
-            //#pragma omp atomic write
             data[offset + i * stride + j] = buffer[i * bsize + j];
 }
 
@@ -169,10 +168,9 @@ unpack_int(
 
 //#pragma omp target teams distribute parallel for simd collapse(2)
 #endif
-#pragma omp parallel for //simd collapse(2)
+#pragma omp parallel for simd collapse(2) //num_threads(nblocks)
     for (int i = 0; i < nblocks; i++)
         for (int j = 0; j < bsize; j++)
-            //#pragma omp atomic write
             data[offset + i * stride + j] = buffer[i * bsize + j];
 }
 
@@ -198,7 +196,7 @@ unpack_3double(
 
 //#pragma omp target teams distribute parallel for simd collapse(2)
 #endif
-#pragma omp parallel for //simd collapse(2)
+#pragma omp parallel for simd collapse(2) //num_threads(nblocks)
     for (int i = 0; i < nblocks; i++)
         for (int j = 0; j < bsize3; j++)
         {
@@ -216,8 +214,6 @@ unpack_field(
     const int offset,
     void *buffer)
 {
-//SP: Level 1 works
-//#pragma omp target
     switch (datasize)
     {
         case 8:
@@ -236,7 +232,7 @@ unpack_field(
             printf("error: datasize %zu not supported\n", datasize);
             break;
     }
-    //profile(UNPACKING);
+    profile(UNPACKING);
 }
 
 
