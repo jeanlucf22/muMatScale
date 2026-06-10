@@ -81,7 +81,9 @@ Recv_Plane(
     int sizeb = bsize * nblocks * datasize;
     void *temp = rbuffer[halo];
     int err =0;
-    #pragma omp target data use_device_ptr(temp)
+#ifdef GPU_PACK
+#pragma omp target data use_device_ptr(temp)
+#endif
     {
          err= MPI_Irecv(temp, sizeb, MPI_BYTE, from, tag, mpi_comm_new,
                      req);
@@ -191,7 +193,9 @@ Send_Plane(
     int sizeb = bsize * nblocks * datasize;
     void *temp = sbuffer[face];
     int err=0;
-    #pragma omp target data use_device_ptr(temp)
+#ifdef GPU_PACK
+#pragma omp target data use_device_ptr(temp)
+#endif
     {
         err= MPI_Isend(temp, sizeb, MPI_BYTE, to, tag, mpi_comm_new,
                      req);
