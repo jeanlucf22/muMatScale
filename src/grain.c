@@ -1323,6 +1323,11 @@ cell_nucleation(
     profile(CALC_NUCLEATION);
 
 #ifdef GPU_OMP_NUC
-#pragma omp target update from(newGrainLocs[0:numGrainPerSub])
+    int grains_to_copy = numNewGrains > (size_t) numGrainPerSub
+        ? numGrainPerSub : (int) numNewGrains;
+    if (grains_to_copy > 0)
+    {
+#pragma omp target update from(newGrainLocs[0:grains_to_copy])
+    }
 #endif
 }
