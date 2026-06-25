@@ -100,7 +100,6 @@ Recv_Plane(
     int err = 0;
 
     int sizeb = bsize * nblocks * datasize;
-    int err =0;
 #ifdef GPU_PACK
     if (use_direct_device_plane(halo))
     {
@@ -234,7 +233,6 @@ Send_Plane(
     computeFaceInfo(face, &offset, &stride, &bsize, &nblocks);
 
     int sizeb = bsize * nblocks * datasize;
-    int err=0;
 #ifdef GPU_PACK
     if (use_direct_device_plane(face))
     {
