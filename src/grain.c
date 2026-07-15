@@ -902,8 +902,7 @@ activateNewGrains(
         profile(GRAIN_ACTIV_SYNC2);
 #ifdef GPU_OMP
         // Only newly activated grain records need to become visible on device.
-        grain_t *new_grains = &grain_cache[bp->num_grains];
-#pragma omp target update to(new_grains[0:new_activations])
+#pragma omp target update to(grain_cache[bp->num_grains:new_activations])
         profile(OFFLOADING_CPU_GPU);
 #endif
     }
@@ -1320,6 +1319,9 @@ cell_nucleation(
     profile(CALC_NUCLEATION);
 
 #ifdef GPU_OMP_NUC
+    if (numNewGrains > 0)
+    {
 #pragma omp target update from(newGrainLocs[0:numNewGrains])
+    }
 #endif
 }
