@@ -56,13 +56,10 @@ sb_diffuse_alloy_decentered(
     double* cl = lsp->cl;
     double *ce = lsp->ce;
 #ifdef GPU_OMP
-#pragma omp target teams distribute
+#pragma omp target teams distribute parallel for collapse(3) schedule(static,1)
 #endif
     for (int k = 1; k <= dimz; k++)
     {
-#ifdef GPU_OMP
-#pragma omp parallel for collapse(2) schedule(static,1)
-#endif
         for (int j = 1; j <= dimy; j++)
         {
             for (int i = 1; i <= dimx; i++)
@@ -206,13 +203,10 @@ fs_change_diffuse(
 #ifndef FSSEP
 
 #if defined(GPU_OMP)
-#pragma omp target teams distribute
+#pragma omp target teams distribute parallel for collapse(3) schedule(static,1)
 #endif
     for (int k = 1; k <= dimz; k++)
     {
-#if defined(GPU_OMP)
-#pragma omp parallel for collapse(2) schedule(static,1)
-#endif
         for (int j = 1; j <= dimy; j++)
         {
             for (int i = 1; i <= dimx; i++)
@@ -357,14 +351,10 @@ grow_octahedra(
 #ifndef GROWSEP
 
 #if defined(GPU_OMP)
-#pragma omp target teams distribute
+#pragma omp target teams distribute parallel for collapse(3) schedule(static,1)
 #endif
     for (int k = 1; k <= dimz; k++)
     {
-#if defined(GPU_OMP)
-#pragma omp parallel for collapse(2) schedule(static,1)
-#endif
-
         for (int j = 1; j <= dimy; j++)
         {
             for (int i = 1; i <= dimx; i++)
@@ -473,14 +463,10 @@ grow_cell_reduction(
     int *nuc_id = lsp->nuc_id;
     int* gr = lsp->gr;
 #if defined(GPU_OMP)
-#pragma omp target map(tofrom:gindex, nindex)
-#pragma omp teams distribute
+#pragma omp target teams distribute parallel for collapse(3) map(tofrom:gindex, nindex) schedule(static,1)
 #endif
     for (int k = 1; k <= dimz; k++)
     {
-#if defined(GPU_OMP)
-#pragma omp parallel for collapse(2) schedule(static,1)
-#endif
         for (int j = 1; j <= dimy; j++)
         {
             for (int i = 1; i <= dimx; i++)
