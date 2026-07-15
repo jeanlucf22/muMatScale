@@ -350,10 +350,7 @@ createGrains(
     size_t base_gr_num)
 {
 #ifdef GPU_OMP
-    // copy gr to CPU since grains are created there
     int* gr = lsp->gr;
-#pragma omp target update from(gr[0:lsp->totaldim])
-    profile(OFFLOADING_GPU_CPU);
 #endif
 
     for (size_t g = 0; g < count; g++)
@@ -382,6 +379,9 @@ createGrains(
                                                                   2);
         SB_struct *sb = lsp;
         sb->gr[idx] = gr_num;
+#ifdef GPU_OMP
+#pragma omp target update to(gr[idx:1])
+#endif
 
         /* Step 2 */
         int found = 0;
@@ -416,12 +416,6 @@ createGrains(
         nucleate_grain(&nuc, &grain_cache[gr_num]);
         dprintf("putting a grain into offset %d\n", gr_num);
     }
-
-#ifdef GPU_OMP
-    // gr has changed and needs to be updated on GPU
-#pragma omp target update to(gr[0:lsp->totaldim])
-    profile(OFFLOADING_CPU_GPU);
-#endif
 }
 
 
@@ -906,7 +900,12 @@ activateNewGrains(
                        grainCommType, mpi_comm_new);
         timing(COMMUNICATION, timer_elapsed());
         profile(GRAIN_ACTIV_SYNC2);
-#pragma omp target update to(grain_cache[0:bp->maxTotalGrains + 1])
+#ifdef GPU_OMP
+        // Only newly activated grain records need to become visible on device.
+        grain_t *new_grains = &grain_cache[bp->num_grains];
+#pragma omp target update to(new_grains[0:new_activations])
+        profile(OFFLOADING_CPU_GPU);
+#endif
     }
 
     bp->num_grains += new_activations;
@@ -1321,6 +1320,6 @@ cell_nucleation(
     profile(CALC_NUCLEATION);
 
 #ifdef GPU_OMP_NUC
-#pragma omp target update from(newGrainLocs[0:numGrainPerSub])
+#pragma omp target update from(newGrainLocs[0:numNewGrains])
 #endif
 }
