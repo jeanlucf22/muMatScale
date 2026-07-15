@@ -21,6 +21,7 @@
 #include "temperature.h"
 #include "grain.h"
 #include "distribute.h"
+#include "profiler.h"
 
 #ifndef PATH_MAX
 #define PATH_MAX 512
