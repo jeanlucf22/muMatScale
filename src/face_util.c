@@ -166,6 +166,7 @@ RecvHalosNB(
         }
     }
 
+    profiler_count_halo(HALO_ACTIVE_RECV_FACES, n_req);
     return n_req;
   err:
     error("Received Recv Error: %d\n", err);
@@ -268,6 +269,7 @@ SendFacesNB(
 
     if (face_count > 0)
     {
+        profiler_count_halo(HALO_ACTIVE_SEND_FACES, face_count);
         pack_faces_field(datasize, data, face_count, faces, strides, bsizes,
                          nblocks, offsets, buffer_slot_cells, sbuf[0]);
     }
