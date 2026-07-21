@@ -1,0 +1,542 @@
+diff --git a/src/calculate.c b/src/calculate.c
+index 850f9b5..835e653 100644
+--- a/src/calculate.c
++++ b/src/calculate.c
+@@ -97,16 +97,33 @@ FinishExchangeForVar(
+ 
+       // unpack received data
+       SB_struct *s = lsp;
++      int faces[NUM_NEIGHBORS];
++      int offsets[NUM_NEIGHBORS];
++      int strides[NUM_NEIGHBORS];
++      int bsizes[NUM_NEIGHBORS];
++      int nblocks[NUM_NEIGHBORS];
++      int face_count = 0;
++
+       for (int face = 0; face < NUM_NEIGHBORS; face++)
+       {
+         int rank = s->neighbors[face][0];
+         // A rank of less than 0 means that it isn't assigned
+         if (rank >= 0 && rank != iproc)
+         {
+-            unpack_plane(data, v->datasize, face, v->rbuf);
++            faces[face_count] = face;
++            computeHaloInfo(face, &offsets[face_count], &strides[face_count],
++                            &bsizes[face_count], &nblocks[face_count]);
++            face_count++;
+         }
+       }
+ 
++      if (face_count > 0)
++      {
++        unpack_faces_field(v->datasize, data, face_count, faces, strides,
++                           bsizes, nblocks, offsets, v->buffer_slot_cells,
++                           v->rbuf[0]);
++      }
++
+ }
+ 
+ static void
+@@ -171,7 +188,7 @@ ExchangeFacesForVar(
+ 
+         v->nreq = SendRecvHalosNB(d, variable_key, v->datasize,
+                                   s->neighbors, v->sbuf, v->rbuf,
+-                                  &v->reqs[0]);
++                                  v->buffer_slot_cells, &v->reqs[0]);
+     }
+     profile(FACE_EXCHNG_REMOTE_SEND);
+     timing(COMPUTATION, timer_elapsed());
+diff --git a/src/face_util.c b/src/face_util.c
+index dac7522..8977cdf 100644
+--- a/src/face_util.c
++++ b/src/face_util.c
+@@ -200,8 +200,8 @@ Send_Plane(
+     int nblocks;
+     int err = 0;
+ 
++    (void)data;
+     computeFaceInfo(face, &offset, &stride, &bsize, &nblocks);
+-    pack_field(datasize, data, stride, bsize, nblocks, offset, sbuffer[face]);
+     int sizeb = bsize * nblocks * datasize;
+ 
+     void *temp = sbuffer[face];
+@@ -241,10 +241,36 @@ SendFacesNB(
+     size_t datasize,
+     int connMap[][2],
+     void *sbuf[6],
++    int buffer_slot_cells,
+     MPI_Request * reqs)
+ {
+     int n_req = 0;
+     int err = 0;
++    int faces[NUM_NEIGHBORS];
++    int offsets[NUM_NEIGHBORS];
++    int strides[NUM_NEIGHBORS];
++    int bsizes[NUM_NEIGHBORS];
++    int nblocks[NUM_NEIGHBORS];
++    int face_count = 0;
++
++    for (int face = 0; face < NUM_NEIGHBORS; face++)
++    {
++        int rank = connMap[face][0];
++        // A rank of less than 0 means that it isn't assigned
++        if (rank >= 0 && rank != iproc)
++        {
++            faces[face_count] = face;
++            computeFaceInfo(face, &offsets[face_count], &strides[face_count],
++                            &bsizes[face_count], &nblocks[face_count]);
++            face_count++;
++        }
++    }
++
++    if (face_count > 0)
++    {
++        pack_faces_field(datasize, data, face_count, faces, strides, bsizes,
++                         nblocks, offsets, buffer_slot_cells, sbuf[0]);
++    }
+ 
+     for (int face = 0; face < NUM_NEIGHBORS; face++)
+     {
+@@ -290,11 +316,13 @@ SendRecvHalosNB(
+     int connMap[][2],
+     void *sbuf[6],
+     void *rbuf[6],
++    int buffer_slot_cells,
+     MPI_Request * reqs)
+ {
+     int n_req = 0;
+     n_req += RecvHalosNB(data, data_key, datasize, connMap, rbuf, &reqs[0]);
+-    n_req += SendFacesNB(data, data_key, datasize, connMap, sbuf, &reqs[n_req]);
++    n_req += SendFacesNB(data, data_key, datasize, connMap, sbuf,
++                         buffer_slot_cells, &reqs[n_req]);
+ 
+     return n_req;
+ }
+diff --git a/src/face_util.h b/src/face_util.h
+index 3a02762..fdff35b 100644
+--- a/src/face_util.h
++++ b/src/face_util.h
+@@ -63,6 +63,7 @@ int SendRecvHalosNB(
+     int connMap[][2],
+     void *sbuf[6],
+     void *rbuf[6],
++    int buffer_slot_cells,
+     MPI_Request * reqs);
+ 
+ void unpack_plane(
+diff --git a/src/packing.c b/src/packing.c
+index 81b6f27..5a593a0 100644
+--- a/src/packing.c
++++ b/src/packing.c
+@@ -7,6 +7,7 @@
+ 
+ #include "globals.h"
+ #include "profiler.h"
++#include "packing.h"
+ 
+ #include <stdlib.h>
+ 
+@@ -125,6 +126,175 @@ pack_field(
+     }
+ }
+ 
++static void
++pack_faces_double(
++    double *data,
++    const int face_count,
++    const int faces[NUM_NEIGHBORS],
++    const int strides[NUM_NEIGHBORS],
++    const int bsizes[NUM_NEIGHBORS],
++    const int nblocks[NUM_NEIGHBORS],
++    const int offsets[NUM_NEIGHBORS],
++    const int buffer_slot_cells,
++    double *buffer)
++{
++    if (face_count <= 0)
++        return;
++
++#ifdef GPU_PACK
++#pragma omp target teams distribute parallel for collapse(2) schedule(static,1) \
++    map(to: faces[0:face_count], strides[0:face_count], \
++            bsizes[0:face_count], nblocks[0:face_count], offsets[0:face_count])
++#endif
++    for (int f = 0; f < face_count; f++)
++    {
++        for (int elem = 0; elem < buffer_slot_cells; elem++)
++        {
++            int elem_count = nblocks[f] * bsizes[f];
++            if (elem < elem_count)
++            {
++                int block = elem / bsizes[f];
++                int j = elem - block * bsizes[f];
++                buffer[faces[f] * buffer_slot_cells + elem] =
++                    data[offsets[f] + block * strides[f] + j];
++            }
++        }
++    }
++
++    profile(PACKING);
++#ifdef GPU_PACK
++#ifdef CPU_MPI
++#pragma omp target update from(buffer[0:NUM_NEIGHBORS*buffer_slot_cells])
++#endif
++    profile(PACKING_GPU_CPU);
++#endif
++}
++
++static void
++pack_faces_int(
++    int *data,
++    const int face_count,
++    const int faces[NUM_NEIGHBORS],
++    const int strides[NUM_NEIGHBORS],
++    const int bsizes[NUM_NEIGHBORS],
++    const int nblocks[NUM_NEIGHBORS],
++    const int offsets[NUM_NEIGHBORS],
++    const int buffer_slot_cells,
++    int *buffer)
++{
++    if (face_count <= 0)
++        return;
++
++#ifdef GPU_PACK
++#pragma omp target teams distribute parallel for collapse(2) schedule(static,1) \
++    map(to: faces[0:face_count], strides[0:face_count], \
++            bsizes[0:face_count], nblocks[0:face_count], offsets[0:face_count])
++#endif
++    for (int f = 0; f < face_count; f++)
++    {
++        for (int elem = 0; elem < buffer_slot_cells; elem++)
++        {
++            int elem_count = nblocks[f] * bsizes[f];
++            if (elem < elem_count)
++            {
++                int block = elem / bsizes[f];
++                int j = elem - block * bsizes[f];
++                buffer[faces[f] * buffer_slot_cells + elem] =
++                    data[offsets[f] + block * strides[f] + j];
++            }
++        }
++    }
++
++    profile(PACKING);
++#ifdef GPU_PACK
++#ifdef CPU_MPI
++#pragma omp target update from(buffer[0:NUM_NEIGHBORS*buffer_slot_cells])
++#endif
++    profile(PACKING_GPU_CPU);
++#endif
++}
++
++static void
++pack_faces_3double(
++    double *data,
++    const int face_count,
++    const int faces[NUM_NEIGHBORS],
++    const int strides[NUM_NEIGHBORS],
++    const int bsizes[NUM_NEIGHBORS],
++    const int nblocks[NUM_NEIGHBORS],
++    const int offsets[NUM_NEIGHBORS],
++    const int buffer_slot_cells,
++    double *buffer)
++{
++    if (face_count <= 0)
++        return;
++
++    const int buffer_slot_elems = 3 * buffer_slot_cells;
++#ifdef GPU_PACK
++#pragma omp target teams distribute parallel for collapse(2) schedule(static,1) \
++    map(to: faces[0:face_count], strides[0:face_count], \
++            bsizes[0:face_count], nblocks[0:face_count], offsets[0:face_count])
++#endif
++    for (int f = 0; f < face_count; f++)
++    {
++        for (int elem = 0; elem < buffer_slot_elems; elem++)
++        {
++            int bsize3 = 3 * bsizes[f];
++            int elem_count = nblocks[f] * bsize3;
++            if (elem < elem_count)
++            {
++                int block = elem / bsize3;
++                int j = elem - block * bsize3;
++                buffer[faces[f] * buffer_slot_elems + elem] =
++                    data[3 * offsets[f] + block * 3 * strides[f] + j];
++            }
++        }
++    }
++
++    profile(PACKING);
++#ifdef GPU_PACK
++#ifdef CPU_MPI
++#pragma omp target update from(buffer[0:NUM_NEIGHBORS*buffer_slot_elems])
++#endif
++    profile(PACKING_GPU_CPU);
++#endif
++}
++
++void
++pack_faces_field(
++    const size_t datasize,
++    void *data,
++    const int face_count,
++    const int faces[NUM_NEIGHBORS],
++    const int strides[NUM_NEIGHBORS],
++    const int bsizes[NUM_NEIGHBORS],
++    const int nblocks[NUM_NEIGHBORS],
++    const int offsets[NUM_NEIGHBORS],
++    const int buffer_slot_cells,
++    void *buffer)
++{
++    switch (datasize)
++    {
++        case 8:
++            pack_faces_double((double *) data, face_count, faces, strides,
++                              bsizes, nblocks, offsets, buffer_slot_cells,
++                              (double *) buffer);
++            break;
++        case 4:
++            pack_faces_int((int *) data, face_count, faces, strides, bsizes,
++                           nblocks, offsets, buffer_slot_cells, (int *) buffer);
++            break;
++        case 24:
++            pack_faces_3double((double *) data, face_count, faces, strides,
++                               bsizes, nblocks, offsets, buffer_slot_cells,
++                               (double *) buffer);
++            break;
++        default:
++            printf("error: datasize %zu not supported\n", datasize);
++            break;
++    }
++}
++
+ void
+ unpack_double(
+     double *data,
+@@ -231,6 +401,165 @@ unpack_field(
+     profile(UNPACKING);
+ }
+ 
++static void
++unpack_faces_double(
++    double *data,
++    const int face_count,
++    const int faces[NUM_NEIGHBORS],
++    const int strides[NUM_NEIGHBORS],
++    const int bsizes[NUM_NEIGHBORS],
++    const int nblocks[NUM_NEIGHBORS],
++    const int offsets[NUM_NEIGHBORS],
++    const int buffer_slot_cells,
++    double *buffer)
++{
++    if (face_count <= 0)
++        return;
++
++#ifdef GPU_PACK
++#ifdef CPU_MPI
++#pragma omp target update to(buffer[0:NUM_NEIGHBORS*buffer_slot_cells])
++#endif
++    profile(PACKING_CPU_GPU);
++#pragma omp target teams distribute parallel for collapse(2) schedule(static,1) \
++    map(to: faces[0:face_count], strides[0:face_count], \
++            bsizes[0:face_count], nblocks[0:face_count], offsets[0:face_count])
++#endif
++    for (int f = 0; f < face_count; f++)
++    {
++        for (int elem = 0; elem < buffer_slot_cells; elem++)
++        {
++            int elem_count = nblocks[f] * bsizes[f];
++            if (elem < elem_count)
++            {
++                int block = elem / bsizes[f];
++                int j = elem - block * bsizes[f];
++                data[offsets[f] + block * strides[f] + j] =
++                    buffer[faces[f] * buffer_slot_cells + elem];
++            }
++        }
++    }
++}
++
++static void
++unpack_faces_int(
++    int *data,
++    const int face_count,
++    const int faces[NUM_NEIGHBORS],
++    const int strides[NUM_NEIGHBORS],
++    const int bsizes[NUM_NEIGHBORS],
++    const int nblocks[NUM_NEIGHBORS],
++    const int offsets[NUM_NEIGHBORS],
++    const int buffer_slot_cells,
++    int *buffer)
++{
++    if (face_count <= 0)
++        return;
++
++#ifdef GPU_PACK
++#ifdef CPU_MPI
++#pragma omp target update to(buffer[0:NUM_NEIGHBORS*buffer_slot_cells])
++#endif
++    profile(PACKING_CPU_GPU);
++#pragma omp target teams distribute parallel for collapse(2) schedule(static,1) \
++    map(to: faces[0:face_count], strides[0:face_count], \
++            bsizes[0:face_count], nblocks[0:face_count], offsets[0:face_count])
++#endif
++    for (int f = 0; f < face_count; f++)
++    {
++        for (int elem = 0; elem < buffer_slot_cells; elem++)
++        {
++            int elem_count = nblocks[f] * bsizes[f];
++            if (elem < elem_count)
++            {
++                int block = elem / bsizes[f];
++                int j = elem - block * bsizes[f];
++                data[offsets[f] + block * strides[f] + j] =
++                    buffer[faces[f] * buffer_slot_cells + elem];
++            }
++        }
++    }
++}
++
++static void
++unpack_faces_3double(
++    double *data,
++    const int face_count,
++    const int faces[NUM_NEIGHBORS],
++    const int strides[NUM_NEIGHBORS],
++    const int bsizes[NUM_NEIGHBORS],
++    const int nblocks[NUM_NEIGHBORS],
++    const int offsets[NUM_NEIGHBORS],
++    const int buffer_slot_cells,
++    double *buffer)
++{
++    if (face_count <= 0)
++        return;
++
++    const int buffer_slot_elems = 3 * buffer_slot_cells;
++#ifdef GPU_PACK
++#ifdef CPU_MPI
++#pragma omp target update to(buffer[0:NUM_NEIGHBORS*buffer_slot_elems])
++#endif
++    profile(PACKING_CPU_GPU);
++#pragma omp target teams distribute parallel for collapse(2) schedule(static,1) \
++    map(to: faces[0:face_count], strides[0:face_count], \
++            bsizes[0:face_count], nblocks[0:face_count], offsets[0:face_count])
++#endif
++    for (int f = 0; f < face_count; f++)
++    {
++        for (int elem = 0; elem < buffer_slot_elems; elem++)
++        {
++            int bsize3 = 3 * bsizes[f];
++            int elem_count = nblocks[f] * bsize3;
++            if (elem < elem_count)
++            {
++                int block = elem / bsize3;
++                int j = elem - block * bsize3;
++                data[3 * offsets[f] + block * 3 * strides[f] + j] =
++                    buffer[faces[f] * buffer_slot_elems + elem];
++            }
++        }
++    }
++}
++
++void
++unpack_faces_field(
++    const size_t datasize,
++    void *data,
++    const int face_count,
++    const int faces[NUM_NEIGHBORS],
++    const int strides[NUM_NEIGHBORS],
++    const int bsizes[NUM_NEIGHBORS],
++    const int nblocks[NUM_NEIGHBORS],
++    const int offsets[NUM_NEIGHBORS],
++    const int buffer_slot_cells,
++    void *buffer)
++{
++    switch (datasize)
++    {
++        case 8:
++            unpack_faces_double((double *) data, face_count, faces, strides,
++                                bsizes, nblocks, offsets, buffer_slot_cells,
++                                (double *) buffer);
++            break;
++        case 4:
++            unpack_faces_int((int *) data, face_count, faces, strides, bsizes,
++                             nblocks, offsets, buffer_slot_cells,
++                             (int *) buffer);
++            break;
++        case 24:
++            unpack_faces_3double((double *) data, face_count, faces, strides,
++                                 bsizes, nblocks, offsets, buffer_slot_cells,
++                                 (double *) buffer);
++            break;
++        default:
++            printf("error: datasize %zu not supported\n", datasize);
++            break;
++    }
++    profile(UNPACKING);
++}
++
+ void
+ computeHaloInfo(
+     const int halo,
+diff --git a/src/packing.h b/src/packing.h
+index 472eb97..627776c 100644
+--- a/src/packing.h
++++ b/src/packing.h
+@@ -5,6 +5,13 @@
+ /* See the top-level LICENSE file for details.                 */
+ /***************************************************************/
+ 
++#ifndef PACKING_H_
++#define PACKING_H_
++
++#include <stddef.h>
++
++#include "globals.h"
++
+ void pack_field(
+     const size_t datasize,
+     void *data,
+@@ -14,6 +21,18 @@ void pack_field(
+     const int offset,
+     void *buffer);
+ 
++void pack_faces_field(
++    const size_t datasize,
++    void *data,
++    const int face_count,
++    const int faces[NUM_NEIGHBORS],
++    const int strides[NUM_NEIGHBORS],
++    const int bsizes[NUM_NEIGHBORS],
++    const int nblocks[NUM_NEIGHBORS],
++    const int offsets[NUM_NEIGHBORS],
++    const int buffer_slot_cells,
++    void *buffer);
++
+ void unpack_field(
+     const size_t datasize,
+     void *data,
+@@ -23,6 +42,18 @@ void unpack_field(
+     const int offset,
+     void *buffer);
+ 
++void unpack_faces_field(
++    const size_t datasize,
++    void *data,
++    const int face_count,
++    const int faces[NUM_NEIGHBORS],
++    const int strides[NUM_NEIGHBORS],
++    const int bsizes[NUM_NEIGHBORS],
++    const int nblocks[NUM_NEIGHBORS],
++    const int offsets[NUM_NEIGHBORS],
++    const int buffer_slot_cells,
++    void *buffer);
++
+ void computeHaloInfo(
+     const int halo,
+     int *offset,
+@@ -36,3 +67,5 @@ void computeFaceInfo(
+     int *stride,
+     int *bsize,
+     int *nblocks);
++
++#endif /* PACKING_H_ */
