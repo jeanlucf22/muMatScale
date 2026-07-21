@@ -81,8 +81,8 @@ registerCommInfo(
 
 
 static void
-FinishExchangeForVar(
-    int variable_key, void* data)
+WaitExchangeForVar(
+    int variable_key)
 {
 
     variable_registration *v = &var_regs[variable_key];
@@ -95,17 +95,24 @@ FinishExchangeForVar(
     dwrite(DEBUG_MPI, "%d: Waitall returned\n", iproc);
     profile(FACE_EXCHNG_REMOTE_WAIT);
 
-      // unpack received data
-      SB_struct *s = lsp;
-      int faces[NUM_NEIGHBORS];
-      int offsets[NUM_NEIGHBORS];
-      int strides[NUM_NEIGHBORS];
-      int bsizes[NUM_NEIGHBORS];
-      int nblocks[NUM_NEIGHBORS];
-      int face_count = 0;
+}
 
-      for (int face = 0; face < NUM_NEIGHBORS; face++)
-      {
+static void
+UnpackExchangeForVar(
+    int variable_key, void* data)
+{
+    variable_registration *v = &var_regs[variable_key];
+    // unpack received data
+    SB_struct *s = lsp;
+    int faces[NUM_NEIGHBORS];
+    int offsets[NUM_NEIGHBORS];
+    int strides[NUM_NEIGHBORS];
+    int bsizes[NUM_NEIGHBORS];
+    int nblocks[NUM_NEIGHBORS];
+    int face_count = 0;
+
+    for (int face = 0; face < NUM_NEIGHBORS; face++)
+    {
         int rank = s->neighbors[face][0];
         // A rank of less than 0 means that it isn't assigned
         if (rank >= 0 && rank != iproc)
@@ -115,15 +122,39 @@ FinishExchangeForVar(
                             &bsizes[face_count], &nblocks[face_count]);
             face_count++;
         }
-      }
+    }
 
-      if (face_count > 0)
-      {
+    if (face_count > 0)
+    {
         unpack_faces_field(v->datasize, data, face_count, faces, strides,
                            bsizes, nblocks, offsets, v->buffer_slot_cells,
                            v->rbuf[0]);
-      }
+    }
 
+}
+
+static void
+FinishExchangeForVar(
+    int variable_key, void* data)
+{
+    WaitExchangeForVar(variable_key);
+    UnpackExchangeForVar(variable_key, data);
+}
+
+static void
+FinishExchangeForVars(
+    const int *variable_keys,
+    void **data,
+    int count)
+{
+    for (int i = 0; i < count; i++)
+    {
+        WaitExchangeForVar(variable_keys[i]);
+    }
+    for (int i = 0; i < count; i++)
+    {
+        UnpackExchangeForVar(variable_keys[i], data[i]);
+    }
 }
 
 static void
@@ -269,10 +300,9 @@ doiteration(
         }
 
         {
-            FinishExchangeForVar(cl_var, lsp->cl);
-        }
-        {
-            FinishExchangeForVar(fs_var, lsp->fs);
+            int halo_keys[2] = { cl_var, fs_var };
+            void *halo_data[2] = { lsp->cl, lsp->fs };
+            FinishExchangeForVars(halo_keys, halo_data, 2);
         }
 
         {
@@ -337,14 +367,11 @@ doiteration(
         }
 #endif
 
-        // finish communications for dc
+        // finish communications for dc and d
         {
-            FinishExchangeForVar(dc_var, lsp->dc);
-        }
-
-        // finish communications for d
-        {
-            FinishExchangeForVar(d_var, lsp->d);
+            int halo_keys[2] = { dc_var, d_var };
+            void *halo_data[2] = { lsp->dc, lsp->d };
+            FinishExchangeForVars(halo_keys, halo_data, 2);
         }
 
         // Uses No Halo: mold, fs, cl, ce, diff_id
