@@ -345,13 +345,42 @@ nucleate_grain(
 
 
 static void
-createGrains(
+syncNewGrainCellsToDevice(
     size_t count,
     size_t base_gr_num)
 {
 #ifdef GPU_OMP
-    int* gr = lsp->gr;
+    if (count == 0)
+        return;
+
+    loc_t *locs = newGrainLocs;
+    int *gr = lsp->gr;
+    const int dimx = bp->gsdimx;
+    const int dimy = bp->gsdimy;
+    const int dimz = bp->gsdimz;
+
+#pragma omp target update to(locs[0:count])
+#pragma omp target teams distribute parallel for
+    for (size_t g = 0; g < count; g++)
+    {
+        int sx = 1 + (locs[g].x % dimx);
+        int sy = 1 + (locs[g].y % dimy);
+        int sz = 1 + (locs[g].z % dimz);
+        int idx = sx + sy * (dimx + 2) + sz * (dimx + 2) * (dimy + 2);
+        gr[idx] = base_gr_num + g;
+    }
+    profile(OFFLOADING_CPU_GPU);
+#else
+    (void)count;
+    (void)base_gr_num;
 #endif
+}
+
+static void
+createGrains(
+    size_t count,
+    size_t base_gr_num)
+{
 
     for (size_t g = 0; g < count; g++)
     {
@@ -379,9 +408,6 @@ createGrains(
                                                                   2);
         SB_struct *sb = lsp;
         sb->gr[idx] = gr_num;
-#ifdef GPU_OMP
-#pragma omp target update to(gr[idx:1])
-#endif
 
         /* Step 2 */
         int found = 0;
@@ -416,6 +442,8 @@ createGrains(
         nucleate_grain(&nuc, &grain_cache[gr_num]);
         dprintf("putting a grain into offset %d\n", gr_num);
     }
+
+    syncNewGrainCellsToDevice(count, base_gr_num);
 }
 
 
