@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <inttypes.h>
 #include <stddef.h>
+#include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include "globals.h"
@@ -97,6 +98,22 @@ WaitExchangeForVar(
 
 }
 
+static int
+TestExchangeForVar(
+    int variable_key)
+{
+    int complete = 0;
+    int err;
+    variable_registration *v = &var_regs[variable_key];
+
+    err = MPI_Testall(v->nreq, v->reqs, &complete, MPI_STATUSES_IGNORE);
+    if (err != MPI_SUCCESS)
+        error("MPI_Testall failed for halo variable %d: %d\n",
+              variable_key, err);
+
+    return complete;
+}
+
 static void
 UnpackExchangeForVar(
     int variable_key, void* data)
@@ -149,13 +166,46 @@ FinishExchangeForVars(
     void **data,
     int count)
 {
-    for (int i = 0; i < count; i++)
+    if (count <= 0)
+        return;
+
+    int completed[count];
+    int remaining = count;
+    memset(completed, 0, sizeof(completed));
+
+    while (remaining > 0)
     {
-        WaitExchangeForVar(variable_keys[i]);
-    }
-    for (int i = 0; i < count; i++)
-    {
-        UnpackExchangeForVar(variable_keys[i], data[i]);
+        int progressed = 0;
+
+        for (int i = 0; i < count; i++)
+        {
+            if (completed[i])
+                continue;
+
+            if (TestExchangeForVar(variable_keys[i]))
+            {
+                completed[i] = 1;
+                remaining--;
+                progressed = 1;
+                profile(FACE_EXCHNG_REMOTE_WAIT);
+                UnpackExchangeForVar(variable_keys[i], data[i]);
+            }
+        }
+
+        if (!progressed)
+        {
+            for (int i = 0; i < count; i++)
+            {
+                if (completed[i])
+                    continue;
+
+                WaitExchangeForVar(variable_keys[i]);
+                completed[i] = 1;
+                remaining--;
+                UnpackExchangeForVar(variable_keys[i], data[i]);
+                break;
+            }
+        }
     }
 }
 
