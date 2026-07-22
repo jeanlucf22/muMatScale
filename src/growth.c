@@ -787,6 +787,8 @@ capture_octahedra_diffuse(
     {
         int idx = diff_id[i];
 
+        if (gr[idx] == ogr[idx])
+            continue;
         dc[idx].x = dc_tmp[i].x;
         dc[idx].y = dc_tmp[i].y;
         dc[idx].z = dc_tmp[i].z;

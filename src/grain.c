@@ -1137,7 +1137,7 @@ cell_nucleation(
                         initnuc = 0;
                 }
 
-                if ((!sb->mold[idx]) && (gr[idx] <= 0) && lyaerno
+                if ((!sb->mold[idx]) && (gr[idx] <= 0) && layerno
                     && initnuc)
                     // Liquid, and a nuc site!
                 {
