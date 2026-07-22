@@ -462,159 +462,9 @@ grow_cell_reduction(
     int *diff_id = lsp->diff_id;
     int *nuc_id = lsp->nuc_id;
     int* gr = lsp->gr;
-
 #if defined(GPU_OMP)
-    const int row_count = dimy * dimz;
-    static int worklist_capacity = 0;
-    static int *grow_counts = NULL;
-    static int *grow_offsets = NULL;
-#ifdef NUC_PRELIST
-    static int *nuc_counts = NULL;
-    static int *nuc_offsets = NULL;
+#pragma omp target teams distribute parallel for collapse(3) map(tofrom:gindex, nindex) schedule(static,1)
 #endif
-
-    if (row_count > worklist_capacity)
-    {
-        if (worklist_capacity > 0)
-        {
-#pragma omp target exit data map(release:grow_counts[0:worklist_capacity])
-#pragma omp target exit data map(release:grow_offsets[0:worklist_capacity])
-            xfree(grow_counts);
-            xfree(grow_offsets);
-#ifdef NUC_PRELIST
-#pragma omp target exit data map(release:nuc_counts[0:worklist_capacity])
-#pragma omp target exit data map(release:nuc_offsets[0:worklist_capacity])
-            xfree(nuc_counts);
-            xfree(nuc_offsets);
-#endif
-        }
-
-        worklist_capacity = row_count + 32;
-        xmalloc(grow_counts, int, worklist_capacity);
-        xmalloc(grow_offsets, int, worklist_capacity);
-#pragma omp target enter data map(alloc:grow_counts[0:worklist_capacity])
-#pragma omp target enter data map(alloc:grow_offsets[0:worklist_capacity])
-#ifdef NUC_PRELIST
-        xmalloc(nuc_counts, int, worklist_capacity);
-        xmalloc(nuc_offsets, int, worklist_capacity);
-#pragma omp target enter data map(alloc:nuc_counts[0:worklist_capacity])
-#pragma omp target enter data map(alloc:nuc_offsets[0:worklist_capacity])
-#endif
-    }
-
-#pragma omp target teams distribute parallel for collapse(2) schedule(static,1)
-    for (int k = 1; k <= dimz; k++)
-    {
-        for (int j = 1; j <= dimy; j++)
-        {
-            const int row = (k - 1) * dimy + (j - 1);
-            int grow_count = 0;
-#ifdef NUC_PRELIST
-            int nuc_count = 0;
-#endif
-
-            for (int i = 1; i <= dimx; i++)
-            {
-                int idx = k * (dimy + 2) * (dimx + 2) + j * (dimx + 2) + i;
-                int idxp = idx + 1;
-                int idxm = idx - 1;
-                int idyp = idx + dimx + 2;
-                int idym = idx - (dimx + 2);
-                int idzp = idx + (dimy + 2) * (dimx + 2);
-                int idzm = idx - (dimy + 2) * (dimx + 2);
-
-                if (mold[idx])
-                    continue;
-
-                if (gr[idx] <= 0)
-                {
-                    int nbindex =
-                        gr[idxp] + gr[idxm] + gr[idyp] +
-                        gr[idym] + gr[idzp] + gr[idzm];
-                    if (nbindex > 0)
-                    {
-                        grow_count++;
-                    }
-#ifdef NUC_PRELIST
-                    else
-                    {
-                        nuc_count++;
-                    }
-#endif
-                }
-            }
-
-            grow_counts[row] = grow_count;
-#ifdef NUC_PRELIST
-            nuc_counts[row] = nuc_count;
-#endif
-        }
-    }
-
-#pragma omp target update from(grow_counts[0:row_count])
-#ifdef NUC_PRELIST
-#pragma omp target update from(nuc_counts[0:row_count])
-#endif
-
-    for (int row = 0; row < row_count; row++)
-    {
-        grow_offsets[row] = gindex + 1;
-        gindex += grow_counts[row];
-#ifdef NUC_PRELIST
-        nuc_offsets[row] = nindex + 1;
-        nindex += nuc_counts[row];
-#endif
-    }
-
-#pragma omp target update to(grow_offsets[0:row_count])
-#ifdef NUC_PRELIST
-#pragma omp target update to(nuc_offsets[0:row_count])
-#endif
-
-#pragma omp target teams distribute parallel for collapse(2) schedule(static,1)
-    for (int k = 1; k <= dimz; k++)
-    {
-        for (int j = 1; j <= dimy; j++)
-        {
-            const int row = (k - 1) * dimy + (j - 1);
-            int grow_write = grow_offsets[row];
-#ifdef NUC_PRELIST
-            int nuc_write = nuc_offsets[row];
-#endif
-
-            for (int i = 1; i <= dimx; i++)
-            {
-                int idx = k * (dimy + 2) * (dimx + 2) + j * (dimx + 2) + i;
-                int idxp = idx + 1;
-                int idxm = idx - 1;
-                int idyp = idx + dimx + 2;
-                int idym = idx - (dimx + 2);
-                int idzp = idx + (dimy + 2) * (dimx + 2);
-                int idzm = idx - (dimy + 2) * (dimx + 2);
-
-                if (mold[idx])
-                    continue;
-
-                if (gr[idx] <= 0)
-                {
-                    int nbindex =
-                        gr[idxp] + gr[idxm] + gr[idyp] +
-                        gr[idym] + gr[idzp] + gr[idzm];
-                    if (nbindex > 0)
-                    {
-                        diff_id[grow_write++] = idx;
-                    }
-#ifdef NUC_PRELIST
-                    else
-                    {
-                        nuc_id[nuc_write++] = idx;
-                    }
-#endif
-                }
-            }
-        }
-    }
-#else
     for (int k = 1; k <= dimz; k++)
     {
         for (int j = 1; j <= dimy; j++)
@@ -666,7 +516,6 @@ grow_cell_reduction(
             }
         }
     }
-#endif
 
     lsp->gindex = gindex;
 #ifdef NUC_PRELIST
