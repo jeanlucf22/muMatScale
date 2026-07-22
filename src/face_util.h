@@ -66,6 +66,9 @@ int SendRecvHalosNB(
     int buffer_slot_cells,
     MPI_Request * reqs);
 
+int use_direct_device_plane(
+    const int face);
+
 void unpack_plane(
     void *data,
     size_t datasize,

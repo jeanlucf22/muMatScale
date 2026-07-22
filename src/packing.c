@@ -642,6 +642,22 @@ unpack_faces_field(
     profile(UNPACKING);
 }
 
+int
+face_is_contiguous_plane(
+    const int face)
+{
+    return face == FACE_BOTTOM || face == FACE_TOP;
+}
+
+void *
+field_plane_ptr(
+    void *data,
+    const size_t datasize,
+    const int offset)
+{
+    return (void *) ((char *) data + (size_t) offset * datasize);
+}
+
 void
 computeHaloInfo(
     const int halo,

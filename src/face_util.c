@@ -49,6 +49,18 @@ createCommTypes(
 	 ((data_key)<<(TAG_FACE_SHIFT)) | \
 	 (face))
 
+int
+use_direct_device_plane(
+    const int face)
+{
+#if defined(GPU_PACK) && !defined(CPU_MPI)
+    return face_is_contiguous_plane(face);
+#else
+    (void) face;
+    return 0;
+#endif
+}
+
 /**
  * Receives halo information
  *
@@ -80,6 +92,25 @@ Recv_Plane(
 
     computeHaloInfo(halo, &offset, &stride, &bsize, &nblocks);
     //fprintf(stderr, "Entering data region for receive\n\n\n\n");
+    int sizeb = bsize * nblocks * datasize;
+
+#if defined(GPU_PACK) && !defined(CPU_MPI)
+    if (use_direct_device_plane(halo))
+    {
+        void *dev_data = data;
+#pragma omp target data use_device_ptr(dev_data)
+        {
+            err = MPI_Irecv(field_plane_ptr(dev_data, datasize, offset),
+                            sizeb, MPI_BYTE, from, tag, mpi_comm_new, req);
+        }
+
+        if (err != MPI_SUCCESS)
+            fprintf(stderr, "Error: MPI_Irecv failed with error code %d\n",
+                    err);
+        return err;
+    }
+#endif
+
     void *temp = rbuffer[halo];
 
 #ifdef GPU_PACK
@@ -90,8 +121,6 @@ Recv_Plane(
     {
       //void *temp = omp_get_mapped_ptr(rbuffer[halo], omp_get_default_device());
       //printf("Values of	bsize:%d , nblocks:%d, datasize:%d, temp: %p,rbuffer[halo]:%p, from:%d, tag:%d, req:%p\n\n", bsize,nblocks,datasize, temp, rbuffer[halo], from,tag,req);   
-
-      int sizeb = bsize * nblocks * datasize;
 
       err =  MPI_Irecv(temp, sizeb, MPI_BYTE, from, tag, mpi_comm_new,
                      req);
@@ -201,9 +230,25 @@ Send_Plane(
     int nblocks;
     int err = 0;
 
-    (void)data;
     computeFaceInfo(face, &offset, &stride, &bsize, &nblocks);
     int sizeb = bsize * nblocks * datasize;
+
+#if defined(GPU_PACK) && !defined(CPU_MPI)
+    if (use_direct_device_plane(face))
+    {
+        void *dev_data = data;
+#pragma omp target data use_device_ptr(dev_data)
+        {
+            err = MPI_Isend(field_plane_ptr(dev_data, datasize, offset),
+                            sizeb, MPI_BYTE, to, tag, mpi_comm_new, req);
+        }
+
+        if (err != MPI_SUCCESS)
+            fprintf(stderr, "Error: MPI_Isend failed with error code %d\n",
+                    err);
+        return err;
+    }
+#endif
 
     void *temp = sbuffer[face];
 #ifdef GPU_PACK
@@ -260,6 +305,8 @@ SendFacesNB(
         // A rank of less than 0 means that it isn't assigned
         if (rank >= 0 && rank != iproc)
         {
+            if (use_direct_device_plane(face))
+                continue;
             faces[face_count] = face;
             computeFaceInfo(face, &offsets[face_count], &strides[face_count],
                             &bsizes[face_count], &nblocks[face_count]);

@@ -117,6 +117,8 @@ UnpackExchangeForVar(
         // A rank of less than 0 means that it isn't assigned
         if (rank >= 0 && rank != iproc)
         {
+            if (use_direct_device_plane(face))
+                continue;
             faces[face_count] = face;
             computeHaloInfo(face, &offsets[face_count], &strides[face_count],
                             &bsizes[face_count], &nblocks[face_count]);

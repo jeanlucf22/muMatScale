@@ -68,4 +68,12 @@ void computeFaceInfo(
     int *bsize,
     int *nblocks);
 
+int face_is_contiguous_plane(
+    const int face);
+
+void *field_plane_ptr(
+    void *data,
+    const size_t datasize,
+    const int offset);
+
 #endif /* PACKING_H_ */
