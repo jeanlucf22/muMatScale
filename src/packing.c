@@ -27,6 +27,36 @@ packed_faces_bytes(
     return bytes;
 }
 
+static void
+packed_faces_buffer_span(
+    const int face_count,
+    const int faces[NUM_NEIGHBORS],
+    const int slot_elems,
+    int *span_start,
+    int *span_len)
+{
+    int min_face = NUM_NEIGHBORS;
+    int max_face = -1;
+
+    for (int f = 0; f < face_count; f++)
+    {
+        if (faces[f] < min_face)
+            min_face = faces[f];
+        if (faces[f] > max_face)
+            max_face = faces[f];
+    }
+
+    if (max_face < min_face)
+    {
+        *span_start = 0;
+        *span_len = 0;
+        return;
+    }
+
+    *span_start = min_face * slot_elems;
+    *span_len = (max_face - min_face + 1) * slot_elems;
+}
+
 // stride: distance between begining of two blocks of data
 // bsize: number of int/double per block of data
 void
@@ -196,10 +226,13 @@ pack_faces_double(
     profile(PACKING);
 #ifdef GPU_PACK
 #ifdef CPU_MPI
+    int update_start = 0;
+    int update_len = 0;
+    packed_faces_buffer_span(face_count, faces, buffer_slot_cells,
+                             &update_start, &update_len);
     profiler_count_halo(HALO_CPU_MPI_D2H_BYTES,
-                        (uint64_t) NUM_NEIGHBORS * buffer_slot_cells *
-                        sizeof(double));
-#pragma omp target update from(buffer[0:NUM_NEIGHBORS*buffer_slot_cells])
+                        (uint64_t) update_len * sizeof(double));
+#pragma omp target update from(buffer[update_start:update_len])
 #endif
     profile(PACKING_GPU_CPU);
 #endif
@@ -247,10 +280,13 @@ pack_faces_int(
     profile(PACKING);
 #ifdef GPU_PACK
 #ifdef CPU_MPI
+    int update_start = 0;
+    int update_len = 0;
+    packed_faces_buffer_span(face_count, faces, buffer_slot_cells,
+                             &update_start, &update_len);
     profiler_count_halo(HALO_CPU_MPI_D2H_BYTES,
-                        (uint64_t) NUM_NEIGHBORS * buffer_slot_cells *
-                        sizeof(int));
-#pragma omp target update from(buffer[0:NUM_NEIGHBORS*buffer_slot_cells])
+                        (uint64_t) update_len * sizeof(int));
+#pragma omp target update from(buffer[update_start:update_len])
 #endif
     profile(PACKING_GPU_CPU);
 #endif
@@ -300,10 +336,13 @@ pack_faces_3double(
     profile(PACKING);
 #ifdef GPU_PACK
 #ifdef CPU_MPI
+    int update_start = 0;
+    int update_len = 0;
+    packed_faces_buffer_span(face_count, faces, buffer_slot_elems,
+                             &update_start, &update_len);
     profiler_count_halo(HALO_CPU_MPI_D2H_BYTES,
-                        (uint64_t) NUM_NEIGHBORS * buffer_slot_elems *
-                        sizeof(double));
-#pragma omp target update from(buffer[0:NUM_NEIGHBORS*buffer_slot_elems])
+                        (uint64_t) update_len * sizeof(double));
+#pragma omp target update from(buffer[update_start:update_len])
 #endif
     profile(PACKING_GPU_CPU);
 #endif
@@ -483,10 +522,13 @@ unpack_faces_double(
 #ifdef GPU_PACK
     profiler_count_halo(HALO_UNPACK_LAUNCHES, 1);
 #ifdef CPU_MPI
+    int update_start = 0;
+    int update_len = 0;
+    packed_faces_buffer_span(face_count, faces, buffer_slot_cells,
+                             &update_start, &update_len);
     profiler_count_halo(HALO_CPU_MPI_H2D_BYTES,
-                        (uint64_t) NUM_NEIGHBORS * buffer_slot_cells *
-                        sizeof(double));
-#pragma omp target update to(buffer[0:NUM_NEIGHBORS*buffer_slot_cells])
+                        (uint64_t) update_len * sizeof(double));
+#pragma omp target update to(buffer[update_start:update_len])
 #endif
     profile(PACKING_CPU_GPU);
 #pragma omp target teams distribute parallel for collapse(2) schedule(static,1) \
@@ -530,10 +572,13 @@ unpack_faces_int(
 #ifdef GPU_PACK
     profiler_count_halo(HALO_UNPACK_LAUNCHES, 1);
 #ifdef CPU_MPI
+    int update_start = 0;
+    int update_len = 0;
+    packed_faces_buffer_span(face_count, faces, buffer_slot_cells,
+                             &update_start, &update_len);
     profiler_count_halo(HALO_CPU_MPI_H2D_BYTES,
-                        (uint64_t) NUM_NEIGHBORS * buffer_slot_cells *
-                        sizeof(int));
-#pragma omp target update to(buffer[0:NUM_NEIGHBORS*buffer_slot_cells])
+                        (uint64_t) update_len * sizeof(int));
+#pragma omp target update to(buffer[update_start:update_len])
 #endif
     profile(PACKING_CPU_GPU);
 #pragma omp target teams distribute parallel for collapse(2) schedule(static,1) \
@@ -578,10 +623,13 @@ unpack_faces_3double(
 #ifdef GPU_PACK
     profiler_count_halo(HALO_UNPACK_LAUNCHES, 1);
 #ifdef CPU_MPI
+    int update_start = 0;
+    int update_len = 0;
+    packed_faces_buffer_span(face_count, faces, buffer_slot_elems,
+                             &update_start, &update_len);
     profiler_count_halo(HALO_CPU_MPI_H2D_BYTES,
-                        (uint64_t) NUM_NEIGHBORS * buffer_slot_elems *
-                        sizeof(double));
-#pragma omp target update to(buffer[0:NUM_NEIGHBORS*buffer_slot_elems])
+                        (uint64_t) update_len * sizeof(double));
+#pragma omp target update to(buffer[update_start:update_len])
 #endif
     profile(PACKING_CPU_GPU);
 #pragma omp target teams distribute parallel for collapse(2) schedule(static,1) \
