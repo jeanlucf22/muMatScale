@@ -1,22 +1,8 @@
-diff --git a/src/setup.c b/src/setup.c
---- a/src/setup.c
-+++ b/src/setup.c
-@@ -195,6 +195,11 @@ allocateFields(
- #pragma omp target enter data map(to:cl[0:totaldim]) nowait
-     decentered_t* dc = lsp->dc;
- #pragma omp target enter data map(to:dc[0:totaldim]) nowait
-+    if (bp->tip_curv == 1)
-+    {
-+        double *curv = lsp->curv;
-+#pragma omp target enter data map(to:curv[0:totaldim]) nowait
-+    }
- 
- #ifdef GPU_OMP_NUC
-     float *nuc_threshold = lsp->nuc_threshold;
 diff --git a/src/calculate.c b/src/calculate.c
+index f8608b9..f0ab19d 100644
 --- a/src/calculate.c
 +++ b/src/calculate.c
-@@ -289,6 +289,12 @@ doiteration(
+@@ -330,6 +330,12 @@ doiteration(
  
  
          // Uses No Halo: gr, cl, ce, oce, fs, temperature
@@ -30,6 +16,7 @@ diff --git a/src/calculate.c b/src/calculate.c
          // Produces: fs, cl, gr
          {
 diff --git a/src/curvature.c b/src/curvature.c
+index e57df84..086124b 100644
 --- a/src/curvature.c
 +++ b/src/curvature.c
 @@ -78,6 +78,16 @@ sb_curvature(
@@ -49,3 +36,19 @@ diff --git a/src/curvature.c b/src/curvature.c
      for (k = 2; k <= dimz - 1; k++)
      {
          for (j = 2; j <= dimy - 1; j++)
+diff --git a/src/setup.c b/src/setup.c
+index 9d32d7c..ef0ee89 100644
+--- a/src/setup.c
++++ b/src/setup.c
+@@ -195,6 +195,11 @@ allocateFields(
+ #pragma omp target enter data map(to:cl[0:totaldim]) nowait
+     decentered_t* dc = lsp->dc;
+ #pragma omp target enter data map(to:dc[0:totaldim]) nowait
++    if (bp->tip_curv == 1)
++    {
++        double *curv = lsp->curv;
++#pragma omp target enter data map(to:curv[0:totaldim]) nowait
++    }
+ 
+ #ifdef GPU_OMP_NUC
+     float *nuc_threshold = lsp->nuc_threshold;
