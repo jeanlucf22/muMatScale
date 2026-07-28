@@ -47,7 +47,19 @@ static char *bucket_names[] = {
     "File IO",
 };
 
+static char *halo_counter_names[] = {
+    "Pack launches",
+    "Unpack launches",
+    "Pack bytes",
+    "Unpack bytes",
+    "CPU-MPI D2H bytes",
+    "CPU-MPI H2D bytes",
+    "Active send faces",
+    "Active recv faces",
+};
+
 static double *bucket_times = NULL;
+static unsigned long long halo_counters[NUM_HALO_COUNTERS] = { 0 };
 static double init_time = 0.0;
 static double last_recorded = 0.0;
 
@@ -57,13 +69,29 @@ profiler_init(
 {
     /* Verify that our sizes are the same */
     assert(sizeof(bucket_names) / sizeof(char *) == NUM_BUCKETS);
+    assert(sizeof(halo_counter_names) / sizeof(char *) == NUM_HALO_COUNTERS);
 
     /* Each process stores timing info into the bucket array entries */
     xmalloc(bucket_times, double,
             NUM_BUCKETS);
+    for (int i = 0; i < NUM_HALO_COUNTERS; i++)
+    {
+        halo_counters[i] = 0;
+    }
 
     init_time = MPI_Wtime();
     last_recorded = init_time;
+}
+
+void
+profiler_count_halo(
+    halo_counter_tag counter,
+    uint64_t amount)
+{
+    if (counter >= 0 && counter < NUM_HALO_COUNTERS)
+    {
+        halo_counters[counter] += (unsigned long long) amount;
+    }
 }
 
 
@@ -99,15 +127,23 @@ profiler_collate(
 #endif
     double (
     *allbuckets)[NUM_BUCKETS] = NULL;
+    unsigned long long (
+    *all_halo_counters)[NUM_HALO_COUNTERS] = NULL;
 
     if (iproc == 0)
     {
         allbuckets =
             (double (*)[NUM_BUCKETS]) malloc(sizeof(double[NUM_BUCKETS]) *
                                              nproc);
+        all_halo_counters =
+            (unsigned long long (*)[NUM_HALO_COUNTERS])
+            malloc(sizeof(unsigned long long[NUM_HALO_COUNTERS]) * nproc);
     }
     MPI_Gather(bucket_times, NUM_BUCKETS, MPI_DOUBLE,
                allbuckets, NUM_BUCKETS, MPI_DOUBLE, 0, mpi_comm_new);
+    MPI_Gather(halo_counters, NUM_HALO_COUNTERS, MPI_UNSIGNED_LONG_LONG,
+               all_halo_counters, NUM_HALO_COUNTERS, MPI_UNSIGNED_LONG_LONG,
+               0, mpi_comm_new);
 
     if (iproc == 0)
     {
@@ -152,7 +188,29 @@ profiler_collate(
         }
         fclose(fp);
 
+        char halo_file[PATH_MAX] = { 0 };
+        snprintf(halo_file, PATH_MAX - 1, "%s_halo_profile_%lu.csv",
+                 bp->basefilename, bp->timestep);
+        fp = fopen(halo_file, "w");
+        fprintf(fp, "Rank");
+        for (int j = 0; j < NUM_HALO_COUNTERS; j++)
+        {
+            fprintf(fp, ",%s", halo_counter_names[j]);
+        }
+        fprintf(fp, "\n");
+        for (int i = 0; i < nproc; i++)
+        {
+            fprintf(fp, "%d", i);
+            for (int j = 0; j < NUM_HALO_COUNTERS; j++)
+            {
+                fprintf(fp, ",%llu", all_halo_counters[i][j]);
+            }
+            fprintf(fp, "\n");
+        }
+        fclose(fp);
+
         xfree(allbuckets);
+        xfree(all_halo_counters);
     }
 }
 
@@ -168,6 +226,10 @@ profiler_write_stats(
     {
         accum_time += bucket_times[i];
         printf("%40s     %lg\n", bucket_names[i], bucket_times[i]);
+    }
+    for (int i = 0; i < NUM_HALO_COUNTERS; i++)
+    {
+        printf("%40s     %llu\n", halo_counter_names[i], halo_counters[i]);
     }
     double total_time = time_now - init_time;
     printf("Total time:  %lg\n", total_time);

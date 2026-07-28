@@ -1,0 +1,18 @@
+diff --git a/src/ca_main.c b/src/ca_main.c
+index 49d3af6..26a2b53 100644
+--- a/src/ca_main.c
++++ b/src/ca_main.c
+@@ -198,7 +198,12 @@ main(
+     //For MPI_Cart_create, the last dimension is the fast growing one
+     int dims[3] = { bp->gnsbz, bp->gnsby, bp->gnsbx };
+     int periods[3] = { 1, 1, 1 };
+-    MPI_Cart_create(MPI_COMM_WORLD, 3, dims, periods, 0, &mpi_comm_new);
++    int cart_reorder = 0;
++    const char *cart_reorder_env = getenv("MUMATSCALE_MPI_CART_REORDER");
++    if (cart_reorder_env != NULL && atoi(cart_reorder_env) != 0)
++        cart_reorder = 1;
++    MPI_Cart_create(MPI_COMM_WORLD, 3, dims, periods, cart_reorder,
++                    &mpi_comm_new);
+ 
+     MPI_Barrier(mpi_comm_new);
+     MPI_Comm_size(mpi_comm_new, &nproc);

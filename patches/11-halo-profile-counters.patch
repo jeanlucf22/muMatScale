@@ -1,0 +1,408 @@
+diff --git a/src/face_util.c b/src/face_util.c
+index 8977cdf..4f5c3cf 100644
+--- a/src/face_util.c
++++ b/src/face_util.c
+@@ -166,6 +166,7 @@ RecvHalosNB(
+         }
+     }
+ 
++    profiler_count_halo(HALO_ACTIVE_RECV_FACES, n_req);
+     return n_req;
+   err:
+     error("Received Recv Error: %d\n", err);
+@@ -268,6 +269,7 @@ SendFacesNB(
+ 
+     if (face_count > 0)
+     {
++        profiler_count_halo(HALO_ACTIVE_SEND_FACES, face_count);
+         pack_faces_field(datasize, data, face_count, faces, strides, bsizes,
+                          nblocks, offsets, buffer_slot_cells, sbuf[0]);
+     }
+diff --git a/src/packing.c b/src/packing.c
+index 5a593a0..786a1b4 100644
+--- a/src/packing.c
++++ b/src/packing.c
+@@ -11,6 +11,22 @@
+ 
+ #include <stdlib.h>
+ 
++static uint64_t
++packed_faces_bytes(
++    const int face_count,
++    const int bsizes[NUM_NEIGHBORS],
++    const int nblocks[NUM_NEIGHBORS],
++    const size_t datasize)
++{
++    uint64_t bytes = 0;
++    for (int f = 0; f < face_count; f++)
++    {
++        bytes += (uint64_t) nblocks[f] * (uint64_t) bsizes[f] *
++                 (uint64_t) datasize;
++    }
++    return bytes;
++}
++
+ // stride: distance between begining of two blocks of data
+ // bsize: number of int/double per block of data
+ void
+@@ -30,9 +46,13 @@ pack_double(
+             buffer[i * bsize + j] = data[offset + i * stride + j];
+ 
+     profile(PACKING);
++    uint64_t bytes = (uint64_t) nblocks * (uint64_t) bsize * sizeof(double);
++    profiler_count_halo(HALO_PACK_BYTES, bytes);
+ 
+ #ifdef GPU_PACK
++    profiler_count_halo(HALO_PACK_LAUNCHES, 1);
+ #ifdef CPU_MPI
++    profiler_count_halo(HALO_CPU_MPI_D2H_BYTES, bytes);
+ #pragma omp target update from(buffer[0:nblocks*bsize])
+ #endif
+     profile(PACKING_GPU_CPU);
+@@ -56,9 +76,13 @@ pack_int(
+             buffer[i * bsize + j] = data[offset + i * stride + j];
+ 
+     profile(PACKING);
++    uint64_t bytes = (uint64_t) nblocks * (uint64_t) bsize * sizeof(int);
++    profiler_count_halo(HALO_PACK_BYTES, bytes);
+ 
+ #ifdef GPU_PACK
++    profiler_count_halo(HALO_PACK_LAUNCHES, 1);
+ #ifdef CPU_MPI
++    profiler_count_halo(HALO_CPU_MPI_D2H_BYTES, bytes);
+ #pragma omp target update from(buffer[0:nblocks*bsize])
+ #endif
+     profile(PACKING_GPU_CPU);
+@@ -87,9 +111,13 @@ pack_3double(
+         }
+ 
+     profile(PACKING);
++    uint64_t bytes = (uint64_t) nblocks * (uint64_t) bsize3 * sizeof(double);
++    profiler_count_halo(HALO_PACK_BYTES, bytes);
+ 
+ #ifdef GPU_PACK
++    profiler_count_halo(HALO_PACK_LAUNCHES, 1);
+ #ifdef CPU_MPI
++    profiler_count_halo(HALO_CPU_MPI_D2H_BYTES, bytes);
+ #pragma omp target update from(buffer[0:nblocks*bsize3])
+ #endif
+     profile(PACKING_GPU_CPU);
+@@ -141,7 +169,11 @@ pack_faces_double(
+     if (face_count <= 0)
+         return;
+ 
++    uint64_t bytes = packed_faces_bytes(face_count, bsizes, nblocks,
++                                        sizeof(double));
++    profiler_count_halo(HALO_PACK_BYTES, bytes);
+ #ifdef GPU_PACK
++    profiler_count_halo(HALO_PACK_LAUNCHES, 1);
+ #pragma omp target teams distribute parallel for collapse(2) schedule(static,1) \
+     map(to: faces[0:face_count], strides[0:face_count], \
+             bsizes[0:face_count], nblocks[0:face_count], offsets[0:face_count])
+@@ -164,6 +196,9 @@ pack_faces_double(
+     profile(PACKING);
+ #ifdef GPU_PACK
+ #ifdef CPU_MPI
++    profiler_count_halo(HALO_CPU_MPI_D2H_BYTES,
++                        (uint64_t) NUM_NEIGHBORS * buffer_slot_cells *
++                        sizeof(double));
+ #pragma omp target update from(buffer[0:NUM_NEIGHBORS*buffer_slot_cells])
+ #endif
+     profile(PACKING_GPU_CPU);
+@@ -185,7 +220,11 @@ pack_faces_int(
+     if (face_count <= 0)
+         return;
+ 
++    uint64_t bytes = packed_faces_bytes(face_count, bsizes, nblocks,
++                                        sizeof(int));
++    profiler_count_halo(HALO_PACK_BYTES, bytes);
+ #ifdef GPU_PACK
++    profiler_count_halo(HALO_PACK_LAUNCHES, 1);
+ #pragma omp target teams distribute parallel for collapse(2) schedule(static,1) \
+     map(to: faces[0:face_count], strides[0:face_count], \
+             bsizes[0:face_count], nblocks[0:face_count], offsets[0:face_count])
+@@ -208,6 +247,9 @@ pack_faces_int(
+     profile(PACKING);
+ #ifdef GPU_PACK
+ #ifdef CPU_MPI
++    profiler_count_halo(HALO_CPU_MPI_D2H_BYTES,
++                        (uint64_t) NUM_NEIGHBORS * buffer_slot_cells *
++                        sizeof(int));
+ #pragma omp target update from(buffer[0:NUM_NEIGHBORS*buffer_slot_cells])
+ #endif
+     profile(PACKING_GPU_CPU);
+@@ -229,8 +271,12 @@ pack_faces_3double(
+     if (face_count <= 0)
+         return;
+ 
++    uint64_t bytes = packed_faces_bytes(face_count, bsizes, nblocks,
++                                        3 * sizeof(double));
++    profiler_count_halo(HALO_PACK_BYTES, bytes);
+     const int buffer_slot_elems = 3 * buffer_slot_cells;
+ #ifdef GPU_PACK
++    profiler_count_halo(HALO_PACK_LAUNCHES, 1);
+ #pragma omp target teams distribute parallel for collapse(2) schedule(static,1) \
+     map(to: faces[0:face_count], strides[0:face_count], \
+             bsizes[0:face_count], nblocks[0:face_count], offsets[0:face_count])
+@@ -254,6 +300,9 @@ pack_faces_3double(
+     profile(PACKING);
+ #ifdef GPU_PACK
+ #ifdef CPU_MPI
++    profiler_count_halo(HALO_CPU_MPI_D2H_BYTES,
++                        (uint64_t) NUM_NEIGHBORS * buffer_slot_elems *
++                        sizeof(double));
+ #pragma omp target update from(buffer[0:NUM_NEIGHBORS*buffer_slot_elems])
+ #endif
+     profile(PACKING_GPU_CPU);
+@@ -304,8 +353,12 @@ unpack_double(
+     const int offset,
+     double *buffer)
+ {
++    uint64_t bytes = (uint64_t) nblocks * (uint64_t) bsize * sizeof(double);
++    profiler_count_halo(HALO_UNPACK_BYTES, bytes);
+ #ifdef GPU_PACK
++    profiler_count_halo(HALO_UNPACK_LAUNCHES, 1);
+ #ifdef CPU_MPI
++    profiler_count_halo(HALO_CPU_MPI_H2D_BYTES, bytes);
+ #pragma omp target update to(buffer[0:nblocks*bsize])
+ #endif
+ 
+@@ -327,8 +380,12 @@ unpack_int(
+     const int offset,
+     int *buffer)
+ {
++    uint64_t bytes = (uint64_t) nblocks * (uint64_t) bsize * sizeof(int);
++    profiler_count_halo(HALO_UNPACK_BYTES, bytes);
+ #ifdef GPU_PACK
++    profiler_count_halo(HALO_UNPACK_LAUNCHES, 1);
+ #ifdef CPU_MPI
++    profiler_count_halo(HALO_CPU_MPI_H2D_BYTES, bytes);
+ #pragma omp target update to(buffer[0:nblocks*bsize])
+ #endif
+ 
+@@ -353,9 +410,13 @@ unpack_3double(
+     const int offset3 = 3 * offset;
+     const int stride3 = 3 * stride;
+     const int bsize3 = 3 * bsize;
++    uint64_t bytes = (uint64_t) nblocks * (uint64_t) bsize3 * sizeof(double);
++    profiler_count_halo(HALO_UNPACK_BYTES, bytes);
+ 
+ #ifdef GPU_PACK
++    profiler_count_halo(HALO_UNPACK_LAUNCHES, 1);
+ #ifdef CPU_MPI
++    profiler_count_halo(HALO_CPU_MPI_H2D_BYTES, bytes);
+ #pragma omp target update to(buffer[0:3*nblocks*bsize])
+ #endif
+ 
+@@ -416,8 +477,15 @@ unpack_faces_double(
+     if (face_count <= 0)
+         return;
+ 
++    uint64_t bytes = packed_faces_bytes(face_count, bsizes, nblocks,
++                                        sizeof(double));
++    profiler_count_halo(HALO_UNPACK_BYTES, bytes);
+ #ifdef GPU_PACK
++    profiler_count_halo(HALO_UNPACK_LAUNCHES, 1);
+ #ifdef CPU_MPI
++    profiler_count_halo(HALO_CPU_MPI_H2D_BYTES,
++                        (uint64_t) NUM_NEIGHBORS * buffer_slot_cells *
++                        sizeof(double));
+ #pragma omp target update to(buffer[0:NUM_NEIGHBORS*buffer_slot_cells])
+ #endif
+     profile(PACKING_CPU_GPU);
+@@ -456,8 +524,15 @@ unpack_faces_int(
+     if (face_count <= 0)
+         return;
+ 
++    uint64_t bytes = packed_faces_bytes(face_count, bsizes, nblocks,
++                                        sizeof(int));
++    profiler_count_halo(HALO_UNPACK_BYTES, bytes);
+ #ifdef GPU_PACK
++    profiler_count_halo(HALO_UNPACK_LAUNCHES, 1);
+ #ifdef CPU_MPI
++    profiler_count_halo(HALO_CPU_MPI_H2D_BYTES,
++                        (uint64_t) NUM_NEIGHBORS * buffer_slot_cells *
++                        sizeof(int));
+ #pragma omp target update to(buffer[0:NUM_NEIGHBORS*buffer_slot_cells])
+ #endif
+     profile(PACKING_CPU_GPU);
+@@ -496,9 +571,16 @@ unpack_faces_3double(
+     if (face_count <= 0)
+         return;
+ 
++    uint64_t bytes = packed_faces_bytes(face_count, bsizes, nblocks,
++                                        3 * sizeof(double));
++    profiler_count_halo(HALO_UNPACK_BYTES, bytes);
+     const int buffer_slot_elems = 3 * buffer_slot_cells;
+ #ifdef GPU_PACK
++    profiler_count_halo(HALO_UNPACK_LAUNCHES, 1);
+ #ifdef CPU_MPI
++    profiler_count_halo(HALO_CPU_MPI_H2D_BYTES,
++                        (uint64_t) NUM_NEIGHBORS * buffer_slot_elems *
++                        sizeof(double));
+ #pragma omp target update to(buffer[0:NUM_NEIGHBORS*buffer_slot_elems])
+ #endif
+     profile(PACKING_CPU_GPU);
+diff --git a/src/profiler.c b/src/profiler.c
+index 265b4e5..9873442 100644
+--- a/src/profiler.c
++++ b/src/profiler.c
+@@ -47,7 +47,19 @@ static char *bucket_names[] = {
+     "File IO",
+ };
+ 
++static char *halo_counter_names[] = {
++    "Pack launches",
++    "Unpack launches",
++    "Pack bytes",
++    "Unpack bytes",
++    "CPU-MPI D2H bytes",
++    "CPU-MPI H2D bytes",
++    "Active send faces",
++    "Active recv faces",
++};
++
+ static double *bucket_times = NULL;
++static unsigned long long halo_counters[NUM_HALO_COUNTERS] = { 0 };
+ static double init_time = 0.0;
+ static double last_recorded = 0.0;
+ 
+@@ -57,15 +69,31 @@ profiler_init(
+ {
+     /* Verify that our sizes are the same */
+     assert(sizeof(bucket_names) / sizeof(char *) == NUM_BUCKETS);
++    assert(sizeof(halo_counter_names) / sizeof(char *) == NUM_HALO_COUNTERS);
+ 
+     /* Each process stores timing info into the bucket array entries */
+     xmalloc(bucket_times, double,
+             NUM_BUCKETS);
++    for (int i = 0; i < NUM_HALO_COUNTERS; i++)
++    {
++        halo_counters[i] = 0;
++    }
+ 
+     init_time = MPI_Wtime();
+     last_recorded = init_time;
+ }
+ 
++void
++profiler_count_halo(
++    halo_counter_tag counter,
++    uint64_t amount)
++{
++    if (counter >= 0 && counter < NUM_HALO_COUNTERS)
++    {
++        halo_counters[counter] += (unsigned long long) amount;
++    }
++}
++
+ 
+ void
+ profile(
+@@ -99,15 +127,23 @@ profiler_collate(
+ #endif
+     double (
+     *allbuckets)[NUM_BUCKETS] = NULL;
++    unsigned long long (
++    *all_halo_counters)[NUM_HALO_COUNTERS] = NULL;
+ 
+     if (iproc == 0)
+     {
+         allbuckets =
+             (double (*)[NUM_BUCKETS]) malloc(sizeof(double[NUM_BUCKETS]) *
+                                              nproc);
++        all_halo_counters =
++            (unsigned long long (*)[NUM_HALO_COUNTERS])
++            malloc(sizeof(unsigned long long[NUM_HALO_COUNTERS]) * nproc);
+     }
+     MPI_Gather(bucket_times, NUM_BUCKETS, MPI_DOUBLE,
+                allbuckets, NUM_BUCKETS, MPI_DOUBLE, 0, mpi_comm_new);
++    MPI_Gather(halo_counters, NUM_HALO_COUNTERS, MPI_UNSIGNED_LONG_LONG,
++               all_halo_counters, NUM_HALO_COUNTERS, MPI_UNSIGNED_LONG_LONG,
++               0, mpi_comm_new);
+ 
+     if (iproc == 0)
+     {
+@@ -152,7 +188,29 @@ profiler_collate(
+         }
+         fclose(fp);
+ 
++        char halo_file[PATH_MAX] = { 0 };
++        snprintf(halo_file, PATH_MAX - 1, "%s_halo_profile_%lu.csv",
++                 bp->basefilename, bp->timestep);
++        fp = fopen(halo_file, "w");
++        fprintf(fp, "Rank");
++        for (int j = 0; j < NUM_HALO_COUNTERS; j++)
++        {
++            fprintf(fp, ",%s", halo_counter_names[j]);
++        }
++        fprintf(fp, "\n");
++        for (int i = 0; i < nproc; i++)
++        {
++            fprintf(fp, "%d", i);
++            for (int j = 0; j < NUM_HALO_COUNTERS; j++)
++            {
++                fprintf(fp, ",%llu", all_halo_counters[i][j]);
++            }
++            fprintf(fp, "\n");
++        }
++        fclose(fp);
++
+         xfree(allbuckets);
++        xfree(all_halo_counters);
+     }
+ }
+ 
+@@ -169,6 +227,10 @@ profiler_write_stats(
+         accum_time += bucket_times[i];
+         printf("%40s     %lg\n", bucket_names[i], bucket_times[i]);
+     }
++    for (int i = 0; i < NUM_HALO_COUNTERS; i++)
++    {
++        printf("%40s     %llu\n", halo_counter_names[i], halo_counters[i]);
++    }
+     double total_time = time_now - init_time;
+     printf("Total time:  %lg\n", total_time);
+     printf("Accumulated time:  %lg\n", accum_time);
+diff --git a/src/profiler.h b/src/profiler.h
+index de393da..7ab4fec 100644
+--- a/src/profiler.h
++++ b/src/profiler.h
+@@ -8,6 +8,8 @@
+ #ifndef PROFILER_H__
+ #define PROFILER_H__
+ 
++#include <stdint.h>
++
+ #include "stopwatch.h"
+ #define SYS_PROFILE 6           //number of system profile metrics, see [1-6]
+ 
+@@ -49,6 +51,19 @@ typedef enum
+     CALC_CURVATURE              //ADD_CURV_LY
+ } bucket_tag;
+ 
++typedef enum
++{
++    HALO_PACK_LAUNCHES = 0,
++    HALO_UNPACK_LAUNCHES,
++    HALO_PACK_BYTES,
++    HALO_UNPACK_BYTES,
++    HALO_CPU_MPI_D2H_BYTES,
++    HALO_CPU_MPI_H2D_BYTES,
++    HALO_ACTIVE_SEND_FACES,
++    HALO_ACTIVE_RECV_FACES,
++    NUM_HALO_COUNTERS
++} halo_counter_tag;
++
+ void profiler_init(
+     void);
+ void profile(
+@@ -60,5 +75,8 @@ void profiler_collate(
+     void);
+ void profiler_write_stats(
+     void);
++void profiler_count_halo(
++    halo_counter_tag counter,
++    uint64_t amount);
+ 
+ #endif

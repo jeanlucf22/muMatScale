@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <inttypes.h>
 #include <stddef.h>
+#include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include "globals.h"
@@ -45,6 +46,10 @@ typedef struct variable_registration
     MPI_Request *reqs;
     int nreq;
     size_t datasize;
+    char *rbuf_base;
+    char *sbuf_base;
+    int buffer_slot_cells;
+    size_t buffer_slot_bytes;
     void *rbuf[6];
     void *sbuf[6];
 } variable_registration;
@@ -63,6 +68,10 @@ registerCommInfo(
     v->reqs = NULL;
     v->nreq = 0;
     v->datasize = datasize;
+    v->rbuf_base = NULL;
+    v->sbuf_base = NULL;
+    v->buffer_slot_cells = 0;
+    v->buffer_slot_bytes = 0;
     for (int i = 0; i < 6; i++)
     {
         v->rbuf[i] = NULL;
@@ -73,8 +82,8 @@ registerCommInfo(
 
 
 static void
-FinishExchangeForVar(
-    int variable_key, void* data)
+WaitExchangeForVar(
+    int variable_key)
 {
 
     variable_registration *v = &var_regs[variable_key];
@@ -87,18 +96,117 @@ FinishExchangeForVar(
     dwrite(DEBUG_MPI, "%d: Waitall returned\n", iproc);
     profile(FACE_EXCHNG_REMOTE_WAIT);
 
-      // unpack received data
-      SB_struct *s = lsp;
-      for (int face = 0; face < NUM_NEIGHBORS; face++)
-      {
+}
+
+static int
+TestExchangeForVar(
+    int variable_key)
+{
+    int complete = 0;
+    int err;
+    variable_registration *v = &var_regs[variable_key];
+
+    err = MPI_Testall(v->nreq, v->reqs, &complete, MPI_STATUSES_IGNORE);
+    if (err != MPI_SUCCESS)
+        error("MPI_Testall failed for halo variable %d: %d\n",
+              variable_key, err);
+
+    return complete;
+}
+
+static void
+UnpackExchangeForVar(
+    int variable_key, void* data)
+{
+    variable_registration *v = &var_regs[variable_key];
+    // unpack received data
+    SB_struct *s = lsp;
+    int faces[NUM_NEIGHBORS];
+    int offsets[NUM_NEIGHBORS];
+    int strides[NUM_NEIGHBORS];
+    int bsizes[NUM_NEIGHBORS];
+    int nblocks[NUM_NEIGHBORS];
+    int face_count = 0;
+
+    for (int face = 0; face < NUM_NEIGHBORS; face++)
+    {
         int rank = s->neighbors[face][0];
         // A rank of less than 0 means that it isn't assigned
         if (rank >= 0 && rank != iproc)
         {
-            unpack_plane(data, v->datasize, face, v->rbuf);
+            if (use_direct_device_plane(face))
+                continue;
+            faces[face_count] = face;
+            computeHaloInfo(face, &offsets[face_count], &strides[face_count],
+                            &bsizes[face_count], &nblocks[face_count]);
+            face_count++;
         }
-      }
+    }
 
+    if (face_count > 0)
+    {
+        unpack_faces_field(v->datasize, data, face_count, faces, strides,
+                           bsizes, nblocks, offsets, v->buffer_slot_cells,
+                           v->rbuf[0]);
+    }
+
+}
+
+static void
+FinishExchangeForVar(
+    int variable_key, void* data)
+{
+    WaitExchangeForVar(variable_key);
+    UnpackExchangeForVar(variable_key, data);
+}
+
+static void
+FinishExchangeForVars(
+    const int *variable_keys,
+    void **data,
+    int count)
+{
+    if (count <= 0)
+        return;
+
+    int completed[count];
+    int remaining = count;
+    memset(completed, 0, sizeof(completed));
+
+    while (remaining > 0)
+    {
+        int progressed = 0;
+
+        for (int i = 0; i < count; i++)
+        {
+            if (completed[i])
+                continue;
+
+            if (TestExchangeForVar(variable_keys[i]))
+            {
+                completed[i] = 1;
+                remaining--;
+                progressed = 1;
+                profile(FACE_EXCHNG_REMOTE_WAIT);
+                UnpackExchangeForVar(variable_keys[i], data[i]);
+            }
+        }
+
+        if (!progressed)
+        {
+            for (int i = 0; i < count; i++)
+            {
+                if (completed[i])
+                    continue;
+
+                WaitExchangeForVar(variable_keys[i]);
+                completed[i] = 1;
+                remaining--;
+                UnpackExchangeForVar(variable_keys[i], data[i]);
+                break;
+            }
+        }
+    }
 }
 
 static void
@@ -109,9 +217,6 @@ ExchangeFacesForVar(
      * each potential Recv that we might do. */
     variable_registration *v = &var_regs[variable_key];
     size_t req_len = 2 * NUM_NEIGHBORS;
-
-    double* dbuf;
-    int* ibuf;
 
     if (v->reqs == NULL)
     {
@@ -132,37 +237,26 @@ ExchangeFacesForVar(
             n2 = nxz;
         if (nyz > n2)
             n2 = nyz;
+
+        v->buffer_slot_cells = n2;
+        v->buffer_slot_bytes = v->datasize * n2;
+        size_t buffer_bytes = NUM_NEIGHBORS * v->buffer_slot_bytes;
+        xmalloc(v->rbuf_base, char, buffer_bytes);
+        xmalloc(v->sbuf_base, char, buffer_bytes);
+
         for (int face = 0; face < NUM_NEIGHBORS; face++)
         {
-            v->rbuf[face] = malloc(v->datasize * n2);
-            memset(v->rbuf[face], 1, v->datasize * n2);
-            v->sbuf[face] = malloc(v->datasize * n2);
-            memset(v->sbuf[face], 1, v->datasize * n2);
-#ifdef GPU_PACK
-switch( v->datasize)
-{
-    case 8:
-        dbuf = (double*)v->rbuf[face];
-#pragma omp target enter data map(to:dbuf[:n2])
-        dbuf = (double*)v->sbuf[face];
-#pragma omp target enter data map(to:dbuf[:n2])
-        break;
-   case 4:
-       ibuf = (int*)v->rbuf[face];
-#pragma omp target enter data map(to:ibuf[:n2])
-       ibuf = (int*)v->sbuf[face];
-#pragma omp target enter data map(to:ibuf[:n2])
-       break;
-   case 24:
-        dbuf = (double*)v->rbuf[face];
-#pragma omp target enter data map(to:dbuf[:3*n2])
-        dbuf = (double*)v->sbuf[face];
-#pragma omp target enter data map(to:dbuf[:3*n2])
-   default:
-       break;
-}
-#endif
+            v->rbuf[face] = v->rbuf_base + face * v->buffer_slot_bytes;
+            v->sbuf[face] = v->sbuf_base + face * v->buffer_slot_bytes;
         }
+
+        /* Halo buffers are scratch. Avoid copying host memset bytes to device. */
+#ifdef GPU_PACK
+        char *rbuf_base = v->rbuf_base;
+        char *sbuf_base = v->sbuf_base;
+#pragma omp target enter data map(alloc:rbuf_base[0:buffer_bytes])
+#pragma omp target enter data map(alloc:sbuf_base[0:buffer_bytes])
+#endif
     }
 
     timing(COMPUTATION, timer_elapsed());
@@ -177,7 +271,7 @@ switch( v->datasize)
 
         v->nreq = SendRecvHalosNB(d, variable_key, v->datasize,
                                   s->neighbors, v->sbuf, v->rbuf,
-                                  &v->reqs[0]);
+                                  v->buffer_slot_cells, &v->reqs[0]);
     }
     profile(FACE_EXCHNG_REMOTE_SEND);
     timing(COMPUTATION, timer_elapsed());
@@ -258,10 +352,9 @@ doiteration(
         }
 
         {
-            FinishExchangeForVar(cl_var, lsp->cl);
-        }
-        {
-            FinishExchangeForVar(fs_var, lsp->fs);
+            int halo_keys[2] = { cl_var, fs_var };
+            void *halo_data[2] = { lsp->cl, lsp->fs };
+            FinishExchangeForVars(halo_keys, halo_data, 2);
         }
 
         {
@@ -326,14 +419,11 @@ doiteration(
         }
 #endif
 
-        // finish communications for dc
+        // finish communications for dc and d
         {
-            FinishExchangeForVar(dc_var, lsp->dc);
-        }
-
-        // finish communications for d
-        {
-            FinishExchangeForVar(d_var, lsp->d);
+            int halo_keys[2] = { dc_var, d_var };
+            void *halo_data[2] = { lsp->dc, lsp->d };
+            FinishExchangeForVars(halo_keys, halo_data, 2);
         }
 
         // Uses No Halo: mold, fs, cl, ce, diff_id

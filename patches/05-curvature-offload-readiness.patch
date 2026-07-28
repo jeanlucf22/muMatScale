@@ -1,0 +1,54 @@
+diff --git a/src/calculate.c b/src/calculate.c
+index f8608b9..f0ab19d 100644
+--- a/src/calculate.c
++++ b/src/calculate.c
+@@ -330,6 +330,12 @@ doiteration(
+ 
+ 
+         // Uses No Halo: gr, cl, ce, oce, fs, temperature
++        // Produces: curv
++        if (bp->tip_curv)
++        {
++            sb_curvature(lsp, NULL);
++        }
++
+         // Uses w/ Halo:
+         // Produces: fs, cl, gr
+         {
+diff --git a/src/curvature.c b/src/curvature.c
+index e57df84..086124b 100644
+--- a/src/curvature.c
++++ b/src/curvature.c
+@@ -78,6 +78,16 @@ sb_curvature(
+ 
+     hx = hy = hxx = hyy = hxy = 0.0;
+ 
++#ifdef GPU_OMP
++#pragma omp target teams distribute parallel for collapse(3) schedule(static,1) \
++    map(to:lsp[0:1]) \
++    private(idx, idl, idr, idf, idb, idu, idd, idur, idul, iddr, iddl, \
++            idfr, idfl, idbr, idbl, idub, iduf, iddf, iddb, idufr, idufl, \
++            idubr, idubl, iddbr, iddbl, iddfl, iddfr, fsl, fsr, fsf, fsb, \
++            fsu, fsd, normal_x, normal_y, normal_z, gamma, n, h, hl, hfl, \
++            hbl, hfr, hr, hbr, hu, hd, hul, hur, hdr, hdl, hb, hf, huf, \
++            hub, hdb, hdf, hx, hy, hxx, hyy, hxy, t, nor_dir, normal_all)
++#endif
+     for (k = 2; k <= dimz - 1; k++)
+     {
+         for (j = 2; j <= dimy - 1; j++)
+diff --git a/src/setup.c b/src/setup.c
+index 9d32d7c..ef0ee89 100644
+--- a/src/setup.c
++++ b/src/setup.c
+@@ -195,6 +195,11 @@ allocateFields(
+ #pragma omp target enter data map(to:cl[0:totaldim]) nowait
+     decentered_t* dc = lsp->dc;
+ #pragma omp target enter data map(to:dc[0:totaldim]) nowait
++    if (bp->tip_curv == 1)
++    {
++        double *curv = lsp->curv;
++#pragma omp target enter data map(to:curv[0:totaldim]) nowait
++    }
+ 
+ #ifdef GPU_OMP_NUC
+     float *nuc_threshold = lsp->nuc_threshold;
