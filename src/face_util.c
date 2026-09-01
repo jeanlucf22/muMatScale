@@ -103,6 +103,7 @@ Recv_Plane(
     return err;
 }
 
+#pragma omp begin declare target
 void
 unpack_plane(
     void *data,
@@ -110,7 +111,7 @@ unpack_plane(
     int halo,
     void *rbuffer[6])
 {
-    assert(rbuffer[halo] != NULL);
+    //assert(rbuffer[halo] != NULL);
 
     int offset;
     int stride;
@@ -121,6 +122,7 @@ unpack_plane(
     unpack_field(datasize, data, stride, bsize, nblocks, offset,
                  rbuffer[halo]);
 }
+#pragma omp end declare target
 
 /**
  * Receives halo information, Non-Blocking

@@ -125,6 +125,7 @@ pack_field(
     }
 }
 
+#pragma omp begin declare target
 void
 unpack_double(
     double *data,
@@ -139,9 +140,9 @@ unpack_double(
 #pragma omp target update to(buffer[0:nblocks*bsize])
 #endif
 
-    profile(PACKING_CPU_GPU);
+    //profile(PACKING_CPU_GPU);
 
-#pragma omp target teams distribute parallel for simd collapse(2)
+#pragma omp parallel for simd collapse(2)
 #endif
     for (int i = 0; i < nblocks; i++)
         for (int j = 0; j < bsize; j++)
@@ -162,9 +163,9 @@ unpack_int(
 #pragma omp target update to(buffer[0:nblocks*bsize])
 #endif
 
-    profile(PACKING_CPU_GPU);
+    //profile(PACKING_CPU_GPU);
 
-#pragma omp target teams distribute parallel for simd collapse(2)
+#pragma omp parallel for simd collapse(2)
 #endif
     for (int i = 0; i < nblocks; i++)
         for (int j = 0; j < bsize; j++)
@@ -189,9 +190,9 @@ unpack_3double(
 #pragma omp target update to(buffer[0:3*nblocks*bsize])
 #endif
 
-    profile(PACKING_CPU_GPU);
+    //profile(PACKING_CPU_GPU);
 
-#pragma omp target teams distribute parallel for simd collapse(2)
+#pragma omp parallel for simd collapse(2)
 #endif
     for (int i = 0; i < nblocks; i++)
         for (int j = 0; j < bsize3; j++)
@@ -225,10 +226,10 @@ unpack_field(
                            (double *) buffer);
             break;
         default:
-            printf("error: datasize %zu not supported\n", datasize);
+            //printf("error: datasize %zu not supported\n", datasize);
             break;
     }
-    profile(UNPACKING);
+    //profile(UNPACKING);
 }
 
 void
@@ -336,3 +337,5 @@ computeFaceInfo(
             break;
     }
 }
+#pragma omp end declare target
+
